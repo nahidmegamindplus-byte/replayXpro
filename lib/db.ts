@@ -69,9 +69,11 @@ function getDatabaseUrl(): string {
 }
 
 const dbUrl = getDatabaseUrl();
-process.env.DATABASE_URL = dbUrl;
-if (!process.env.DIRECT_URL || !process.env.DIRECT_URL.startsWith('postgres')) {
-  process.env.DIRECT_URL = DEFAULT_SUPABASE_DIRECT_URL;
+if (typeof process !== 'undefined' && process.env) {
+  process.env['DATABASE_URL'] = dbUrl;
+  if (!process.env['DIRECT_URL'] || !process.env['DIRECT_URL'].startsWith('postgres')) {
+    process.env['DIRECT_URL'] = DEFAULT_SUPABASE_DIRECT_URL;
+  }
 }
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
