@@ -44,9 +44,14 @@ function loadEnvFromDisk(): void {
 // Ensure env is loaded from disk immediately
 loadEnvFromDisk();
 
+const DEFAULT_SUPABASE_DATABASE_URL =
+  'postgresql://postgres.toucabgdgfrkpohwkzki:Nm%40102060%40nm@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true';
+const DEFAULT_SUPABASE_DIRECT_URL =
+  'postgresql://postgres.toucabgdgfrkpohwkzki:Nm%40102060%40nm@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres';
+
 function getDatabaseUrl(): string {
   loadEnvFromDisk();
-  const envUrl = process.env.DATABASE_URL;
+  let envUrl = process.env.DATABASE_URL;
 
   // 1. If a PostgreSQL URL is configured, use it directly
   if (envUrl && (envUrl.startsWith('postgresql://') || envUrl.startsWith('postgres://'))) {
@@ -59,49 +64,14 @@ function getDatabaseUrl(): string {
     return directUrl;
   }
 
-  // 3. If another remote database URL (e.g. mysql, libsql)
-  if (envUrl && !envUrl.startsWith('file:') && !envUrl.startsWith('./') && !envUrl.includes('dev.db')) {
-    return envUrl;
-  }
-
-  // 4. Check if schema.prisma expects postgresql
-  try {
-    const schemaPath = path.resolve(process.cwd(), 'prisma', 'schema.prisma');
-    if (fs.existsSync(schemaPath)) {
-      const schema = fs.readFileSync(schemaPath, 'utf8');
-      if (schema.includes('provider = "postgresql"') || schema.includes('provider  = "postgresql"')) {
-        // Must never return file: for postgresql schema
-        return envUrl || '';
-      }
-    }
-  } catch (_) {}
-
-  // 5. Fallback for SQLite only if explicitly using SQLite schema
-  function findProjectRoot(): string {
-    if (fs.existsSync(path.join(process.cwd(), 'prisma'))) {
-      return process.cwd();
-    }
-    let currentDir = __dirname;
-    for (let i = 0; i < 5; i++) {
-      if (fs.existsSync(path.join(currentDir, 'prisma'))) {
-        return currentDir;
-      }
-      const parent = path.dirname(currentDir);
-      if (parent === currentDir) break;
-      currentDir = parent;
-    }
-    return process.cwd();
-  }
-
-  const rootDir = findProjectRoot();
-  const localPrismaDir = path.resolve(rootDir, 'prisma');
-  const localDb = path.resolve(localPrismaDir, 'dev.db');
-  return `file:${localDb}?connection_limit=1&busy_timeout=30000`;
+  // 3. Fallback to Supabase project URL
+  return DEFAULT_SUPABASE_DATABASE_URL;
 }
 
 const dbUrl = getDatabaseUrl();
-if (dbUrl && !dbUrl.startsWith('file:')) {
-  process.env.DATABASE_URL = dbUrl;
+process.env.DATABASE_URL = dbUrl;
+if (!process.env.DIRECT_URL || !process.env.DIRECT_URL.startsWith('postgres')) {
+  process.env.DIRECT_URL = DEFAULT_SUPABASE_DIRECT_URL;
 }
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
@@ -109,9 +79,11 @@ const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
-    ...(dbUrl && (dbUrl.startsWith('postgresql://') || dbUrl.startsWith('postgres://'))
-      ? { datasources: { db: { url: dbUrl } } }
-      : {}),
+    datasources: {
+      db: {
+        url: dbUrl,
+      },
+    },
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
   });
 

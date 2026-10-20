@@ -22,6 +22,17 @@ const nextConfig = {
       },
     ],
   },
+  env: {
+    DATABASE_URL:
+      process.env.DATABASE_URL ||
+      'postgresql://postgres.toucabgdgfrkpohwkzki:Nm%40102060%40nm@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true',
+    DIRECT_URL:
+      process.env.DIRECT_URL ||
+      'postgresql://postgres.toucabgdgfrkpohwkzki:Nm%40102060%40nm@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres',
+    JWT_SECRET: process.env.JWT_SECRET || 'replyx_ai_super_secret_jwt_key_2026_bd_secure',
+    ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || 'replyx_32_bytes_secret_key_2026!',
+    SUPABASE_URL: process.env.SUPABASE_URL || 'https://toucabgdgfrkpohwkzki.supabase.co',
+  },
   webpack: (config) => {
     config.externals = [...(config.externals || []), 'bcryptjs'];
     return config;
