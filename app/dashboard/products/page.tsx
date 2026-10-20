@@ -21,6 +21,7 @@ import {
   Download,
   FileSpreadsheet,
   AlertCircle,
+  Zap,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 import { apiFetch } from '@/lib/api-client';
@@ -48,6 +49,7 @@ export default function ProductsPage() {
   const [selectedPage, setSelectedPage] = useState('ALL');
   const [selectedCategory, setSelectedCategory] = useState('ALL');
   const [selectedStock, setSelectedStock] = useState('ALL');
+  const [selectedType, setSelectedType] = useState('ALL');
 
   // Modal States
   const [showModal, setShowModal] = useState(false);
@@ -74,6 +76,9 @@ export default function ProductsPage() {
     images: [] as string[],
     deliveryInfo: '',
     productAiInstructions: '',
+    productType: 'PHYSICAL' as 'PHYSICAL' | 'DIGITAL',
+    digitalFileUrl: '',
+    digitalInstructions: '',
     pageId: 'ALL',
   });
 
@@ -127,6 +132,9 @@ export default function ProductsPage() {
       images: [],
       deliveryInfo: '',
       productAiInstructions: '',
+      productType: 'PHYSICAL',
+      digitalFileUrl: '',
+      digitalInstructions: '',
       pageId: selectedPage !== 'ALL' ? selectedPage : 'ALL',
     });
     setImageUploadMode('upload');
@@ -337,6 +345,9 @@ export default function ProductsPage() {
       images: initialImages,
       deliveryInfo: p.deliveryInfo || '',
       productAiInstructions: p.productAiInstructions || '',
+      productType: p.productType || 'PHYSICAL',
+      digitalFileUrl: p.digitalFileUrl || '',
+      digitalInstructions: p.digitalInstructions || '',
       pageId: p.pageId || 'ALL',
     });
     setImageUploadMode(p.imageUrl?.startsWith('data:') ? 'upload' : 'url');
@@ -581,6 +592,17 @@ export default function ProductsPage() {
             <option value="OUT_OF_STOCK">স্টক শেষ (Out of Stock)</option>
             <option value="PRE_ORDER">প্রি-অর্ডার (Pre Order)</option>
           </select>
+
+          {/* Product Type Filter */}
+          <select
+            value={selectedType}
+            onChange={(e) => setSelectedType(e.target.value)}
+            className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-700 focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/20"
+          >
+            <option value="ALL">সকল ধরন (ফিজিক্যাল ও ডিজিটাল)</option>
+            <option value="PHYSICAL">📦 ফিজিক্যাল পণ্য</option>
+            <option value="DIGITAL">⚡ ডিজিটাল পণ্য</option>
+          </select>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -629,110 +651,151 @@ export default function ProductsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {products.map((p) => (
-            <div
-              key={p.id}
-              className="bg-white border border-slate-200 hover:border-slate-300 rounded-2xl p-5 transition-all shadow-xs hover:shadow-md flex flex-col justify-between group"
-            >
-              <div>
-                {/* Product Image & Badges */}
-                <div className="relative w-full h-48 rounded-xl bg-slate-50 border border-slate-200 overflow-hidden mb-4 flex items-center justify-center">
-                  {p.imageUrl ? (
-                    <img
-                      src={p.imageUrl}
-                      alt={p.name}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center gap-1 text-slate-400">
-                      <ImageIcon className="w-10 h-10 stroke-1" />
-                      <span className="text-[11px]">ছবি নেই</span>
-                    </div>
-                  )}
+          {products
+            .filter((p) => selectedType === 'ALL' || (p.productType || 'PHYSICAL') === selectedType)
+            .map((p) => {
+              const isDigital = p.productType === 'DIGITAL';
+              return (
+                <div
+                  key={p.id}
+                  className="bg-white border border-slate-200 hover:border-slate-300 rounded-2xl p-5 transition-all shadow-xs hover:shadow-md flex flex-col justify-between group"
+                >
+                  <div>
+                    {/* Product Image & Badges */}
+                    <div className="relative w-full h-48 rounded-xl bg-slate-50 border border-slate-200 overflow-hidden mb-4 flex items-center justify-center">
+                      {p.imageUrl ? (
+                        <img
+                          src={p.imageUrl}
+                          alt={p.name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                      ) : (
+                        <div className="flex flex-col items-center gap-1 text-slate-400">
+                          {isDigital ? (
+                            <Zap className="w-10 h-10 stroke-1 text-amber-500" />
+                          ) : (
+                            <ImageIcon className="w-10 h-10 stroke-1" />
+                          )}
+                          <span className="text-[11px]">{isDigital ? 'ডিজিটাল প্রোডাক্ট' : 'ছবি নেই'}</span>
+                        </div>
+                      )}
 
-                  {/* Price Tag */}
-                  <div className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-full bg-white/95 backdrop-blur-md border border-slate-200 text-xs font-bold text-indigo-700 shadow-xs">
-                    {p.discountPrice ? `${p.discountPrice} ৳` : `${p.price} ৳`}
-                    {p.discountPrice && (
-                      <span className="text-[10px] line-through text-slate-400 ml-1.5">{p.price} ৳</span>
-                    )}
+                      {/* Price Tag */}
+                      <div className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-full bg-white/95 backdrop-blur-md border border-slate-200 text-xs font-bold text-indigo-700 shadow-xs">
+                        {p.discountPrice ? `${p.discountPrice} ৳` : `${p.price} ৳`}
+                        {p.discountPrice && (
+                          <span className="text-[10px] line-through text-slate-400 ml-1.5">{p.price} ৳</span>
+                        )}
+                      </div>
+
+                      {/* Product Type & Category Badges */}
+                      <div className="absolute top-2.5 left-2.5 flex flex-col gap-1">
+                        {isDigital ? (
+                          <span className="px-2 py-0.5 rounded-md bg-amber-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-2xs">
+                            <Zap className="w-3 h-3" /> ডিজিটাল
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-md bg-indigo-600 text-white font-bold text-[10px] flex items-center gap-1 shadow-2xs">
+                            <Package className="w-3 h-3" /> ফিজিক্যাল
+                          </span>
+                        )}
+                        {p.category && (
+                          <div className="px-2 py-0.5 rounded-md bg-white/90 backdrop-blur-md text-[10px] font-semibold text-slate-700 border border-slate-200 shadow-2xs">
+                            {p.category}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Connected Page Badge */}
+                      <div className="absolute bottom-2.5 left-2.5 px-2.5 py-1 rounded-lg bg-white/90 backdrop-blur-md text-[10px] font-semibold text-slate-700 border border-slate-200 flex items-center gap-1 shadow-2xs">
+                        <Layers className="w-3 h-3 text-indigo-600" />
+                        <span>{p.page ? p.page.pageName : 'সকল Page (Global)'}</span>
+                      </div>
+
+                      {/* Multi-Image Badge */}
+                      {p.images && p.images.length > 1 && (
+                        <div className="absolute bottom-2.5 right-2.5 px-2.5 py-1 rounded-lg bg-slate-900/80 backdrop-blur-md text-[10px] font-bold text-white flex items-center gap-1.5 shadow-2xs">
+                          <ImageIcon className="w-3 h-3 text-indigo-300" />
+                          <span>{p.images.length}টি ছবি</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Title & Description */}
+                    <h3 className="text-base font-bold text-slate-900 mb-1 line-clamp-1">{p.name}</h3>
+                    <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed mb-3">
+                      {p.description || 'কোনো বিবরণ যোগ করা হয়নি।'}
+                    </p>
+
+                    {/* Digital Product Delivery Notice Banner */}
+                    {isDigital ? (
+                      <div className="mb-3 px-3 py-2 rounded-xl bg-amber-50/80 border border-amber-200/90 text-[11px] text-amber-900 flex items-center justify-between">
+                        <span className="flex items-center gap-1.5 font-bold">
+                          <Zap className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>ইনস্ট্যান্ট ইমেইল ডেলিভারি (৳০)</span>
+                        </span>
+                        {p.digitalFileUrl ? (
+                          <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded font-medium">
+                            ফাইল লিঙ্ক প্রস্তুত ✓
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-400">লিংক নেই</span>
+                        )}
+                      </div>
+                    ) : null}
+
+                    {/* Stock and SKU */}
+                    <div className="flex items-center justify-between text-xs py-2 border-t border-slate-100 text-slate-500">
+                      <div className="flex items-center gap-1.5">
+                        {isDigital ? (
+                          <span className="text-amber-700 flex items-center gap-1 text-[11px] font-medium">
+                            <Zap className="w-3.5 h-3.5 text-amber-500" /> ডিজিটাল এক্সেস (আনলিমিটেড)
+                          </span>
+                        ) : p.stockStatus === 'IN_STOCK' ? (
+                          <span className="text-emerald-700 flex items-center gap-1 text-[11px] font-medium">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> স্টকে আছে ({p.stockQuantity}টি)
+                          </span>
+                        ) : p.stockStatus === 'PRE_ORDER' ? (
+                          <span className="text-amber-700 flex items-center gap-1 text-[11px] font-medium">
+                            <Clock className="w-3.5 h-3.5 text-amber-600" /> প্রি-অর্ডার
+                          </span>
+                        ) : (
+                          <span className="text-rose-700 flex items-center gap-1 text-[11px] font-medium">
+                            <XCircle className="w-3.5 h-3.5 text-rose-600" /> স্টক শেষ
+                          </span>
+                        )}
+                      </div>
+                      {p.sku && <span className="font-mono text-[11px] text-slate-400">SKU: {p.sku}</span>}
+                    </div>
                   </div>
 
-                  {/* Category Badge */}
-                  {p.category && (
-                    <div className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-white/90 backdrop-blur-md text-[10px] font-semibold text-slate-700 border border-slate-200 shadow-2xs">
-                      {p.category}
-                    </div>
-                  )}
-
-                  {/* Connected Page Badge */}
-                  <div className="absolute bottom-2.5 left-2.5 px-2.5 py-1 rounded-lg bg-white/90 backdrop-blur-md text-[10px] font-semibold text-slate-700 border border-slate-200 flex items-center gap-1 shadow-2xs">
-                    <Layers className="w-3 h-3 text-indigo-600" />
-                    <span>{p.page ? p.page.pageName : 'সকল Page (Global)'}</span>
+                  {/* Action Buttons */}
+                  <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100 mt-2">
+                    <button
+                      onClick={() => handleDuplicate(p.id)}
+                      title="ডুপ্লিকেট করুন"
+                      className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 transition-colors"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleOpenEdit(p)}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 text-xs font-semibold border border-slate-200/80 transition-colors"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>এডিট</span>
+                    </button>
+                    <button
+                      onClick={() => handleDelete(p.id, p.name)}
+                      title="মুছে ফেলুন"
+                      className="p-2 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
-
-                  {/* Multi-Image Badge */}
-                  {p.images && p.images.length > 1 && (
-                    <div className="absolute bottom-2.5 right-2.5 px-2.5 py-1 rounded-lg bg-slate-900/80 backdrop-blur-md text-[10px] font-bold text-white flex items-center gap-1.5 shadow-2xs">
-                      <ImageIcon className="w-3 h-3 text-indigo-300" />
-                      <span>{p.images.length}টি ছবি</span>
-                    </div>
-                  )}
                 </div>
-
-                {/* Title & Description */}
-                <h3 className="text-base font-bold text-slate-900 mb-1 line-clamp-1">{p.name}</h3>
-                <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed mb-3">
-                  {p.description || 'কোনো বিবরণ যোগ করা হয়নি।'}
-                </p>
-
-                {/* Stock and SKU */}
-                <div className="flex items-center justify-between text-xs py-2 border-t border-slate-100 text-slate-500">
-                  <div className="flex items-center gap-1.5">
-                    {p.stockStatus === 'IN_STOCK' ? (
-                      <span className="text-emerald-700 flex items-center gap-1 text-[11px] font-medium">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> স্টকে আছে ({p.stockQuantity}টি)
-                      </span>
-                    ) : p.stockStatus === 'PRE_ORDER' ? (
-                      <span className="text-amber-700 flex items-center gap-1 text-[11px] font-medium">
-                        <Clock className="w-3.5 h-3.5 text-amber-600" /> প্রি-অর্ডার
-                      </span>
-                    ) : (
-                      <span className="text-rose-700 flex items-center gap-1 text-[11px] font-medium">
-                        <XCircle className="w-3.5 h-3.5 text-rose-600" /> স্টক শেষ
-                      </span>
-                    )}
-                  </div>
-                  {p.sku && <span className="font-mono text-[11px] text-slate-400">SKU: {p.sku}</span>}
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100 mt-2">
-                <button
-                  onClick={() => handleDuplicate(p.id)}
-                  title="ডুপ্লিকেট করুন"
-                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 transition-colors"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => handleOpenEdit(p)}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 text-xs font-semibold border border-slate-200/80 transition-colors"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                  <span>এডিট</span>
-                </button>
-                <button
-                  onClick={() => handleDelete(p.id, p.name)}
-                  title="মুছে ফেলুন"
-                  className="p-2 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-          ))}
+              );
+            })}
         </div>
       )}
 
@@ -771,6 +834,74 @@ export default function ProductsPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Product Type Selector */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                  <span>পণ্যের ধরন (Product Type)</span>
+                  <span className="text-rose-500">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData({
+                        ...formData,
+                        productType: 'PHYSICAL',
+                        deliveryInfo:
+                          formData.deliveryInfo === 'ইনস্ট্যান্ট ইমেইল ডেলিভারি (৳০)' ? '' : formData.deliveryInfo,
+                      })
+                    }
+                    className={`p-3 rounded-2xl border text-left transition-all flex items-start gap-2.5 ${
+                      formData.productType === 'PHYSICAL'
+                        ? 'bg-indigo-50/90 border-indigo-500 ring-2 ring-indigo-500/20 text-indigo-950 font-medium shadow-xs'
+                        : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <div
+                      className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                        formData.productType === 'PHYSICAL' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
+                      }`}
+                    >
+                      <Package className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-900">📦 ফিজিক্যাল পণ্য</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">কুরিয়ারে ডেলিভারি (পোশাক, জুতা, ঘড়ি ইত্যাদি)</p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData({
+                        ...formData,
+                        productType: 'DIGITAL',
+                        deliveryInfo: formData.deliveryInfo || 'ইনস্ট্যান্ট ইমেইল ডেলিভারি (৳০)',
+                        stockQuantity: '999999',
+                        stockStatus: 'IN_STOCK',
+                      })
+                    }
+                    className={`p-3 rounded-2xl border text-left transition-all flex items-start gap-2.5 ${
+                      formData.productType === 'DIGITAL'
+                        ? 'bg-amber-50/90 border-amber-500 ring-2 ring-amber-500/20 text-amber-950 font-medium shadow-xs'
+                        : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <div
+                      className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                        formData.productType === 'DIGITAL' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-500'
+                      }`}
+                    >
+                      <Zap className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-amber-900">⚡ ডিজিটাল পণ্য</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">পেমেন্ট হলেই ইমেইলে সাথে সাথে ফাইল লিংক ও লাইসেন্স চলে যাবে</p>
+                    </div>
+                  </button>
+                </div>
               </div>
 
               {/* Product Name */}
@@ -1008,6 +1139,57 @@ export default function ProductsPage() {
                   <span>১ম ছবিটি প্রধান ছবি হবে। পেজ সেটিংসে নির্ধারিত সংখ্যা অনুযায়ী AI একসাথে একাধিক ছবি পাঠাতে পারবে।</span>
                 </div>
               </div>
+
+              {/* Digital Product Delivery Information Section */}
+              {formData.productType === 'DIGITAL' && (
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-50/90 to-orange-50/70 border border-amber-200/90 space-y-3.5 shadow-2xs">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center shadow-xs">
+                      <Zap className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-amber-950">ডিজিটাল ইনস্ট্যান্ট ডেলিভারি সেটআপ (Instant Email Delivery)</h4>
+                      <p className="text-[10px] text-amber-800">
+                        কাস্টমার পেমেন্ট/অর্ডার কনফার্ম করার সাথে সাথেই এই ডাউনলোড লিংক ও লাইসেন্স তার ইমেইলে চলে যাবে।
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-800 mb-1 flex items-center gap-1.5">
+                      <LinkIcon className="w-3.5 h-3.5 text-amber-600" />
+                      <span>ডিজিটাল ফাইল বা ডাউনলোড লিংক (URL)</span>
+                    </label>
+                    <input
+                      type="url"
+                      value={formData.digitalFileUrl}
+                      onChange={(e) => setFormData({ ...formData, digitalFileUrl: e.target.value })}
+                      placeholder="https://drive.google.com/file/d/... বা https://dropbox.com/..."
+                      className="w-full px-3.5 py-2 bg-white border border-amber-200 rounded-xl text-slate-900 text-xs font-mono focus:outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-500/20"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      গ্রাহক তার ইমেইলে একটি বড় "ডাউনলোড করুন" বোতাম পাবে যা এই লিংকে নিয়ে যাবে।
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-800 mb-1 flex items-center gap-1.5">
+                      <Copy className="w-3.5 h-3.5 text-amber-600" />
+                      <span>লাইসেন্স কী / অ্যাক্সেস নির্দেশনা (License Key / Credentials)</span>
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={formData.digitalInstructions}
+                      onChange={(e) => setFormData({ ...formData, digitalInstructions: e.target.value })}
+                      placeholder="লাইসেন্স কী: XXXX-YYYY-ZZZZ, অথবা পাসওয়ার্ড ও ব্যবহারের নিয়মাবলী..."
+                      className="w-full px-3.5 py-2 bg-white border border-amber-200 rounded-xl text-slate-900 text-xs font-mono focus:outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-500/20"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      ইমেইলে এটি সুন্দর একটি হাইলাইট বক্সে দেখানো হবে যা কাস্টমার ১-ক্লিকে কপি করতে পারবেন।
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Description */}
               <div>

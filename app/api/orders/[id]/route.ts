@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import { logActivity } from '@/lib/logger';
+import { deliverDigitalOrder } from '@/lib/digital-delivery';
 
 export async function GET(
   req: NextRequest,
@@ -69,9 +70,13 @@ export async function PATCH(
 
     if (body.status !== undefined) updateData.status = body.status;
     if (body.customerName !== undefined) updateData.customerName = body.customerName.trim();
+    if (body.customerEmail !== undefined) updateData.customerEmail = body.customerEmail ? body.customerEmail.trim().toLowerCase() : null;
     if (body.phone !== undefined) updateData.phone = body.phone.trim();
     if (body.address !== undefined) updateData.address = body.address.trim();
     if (body.product !== undefined) updateData.product = body.product.trim();
+    if (body.productType !== undefined) updateData.productType = body.productType;
+    if (body.paymentStatus !== undefined) updateData.paymentStatus = body.paymentStatus;
+    if (body.isDigitalDelivered !== undefined) updateData.isDigitalDelivered = Boolean(body.isDigitalDelivered);
     if (body.quantity !== undefined) updateData.quantity = parseInt(body.quantity, 10);
     if (body.totalPrice !== undefined) updateData.totalPrice = parseFloat(body.totalPrice);
     if (body.notes !== undefined) updateData.notes = body.notes ? body.notes.trim() : null;
@@ -80,6 +85,20 @@ export async function PATCH(
       where: { id: params.id },
       data: updateData,
     });
+
+    // Auto-fulfill digital order if confirmed or paid and not yet delivered
+    if (
+      updated.productType === 'DIGITAL' &&
+      updated.customerEmail &&
+      !updated.isDigitalDelivered &&
+      (updated.status === 'CONFIRMED' || updated.status === 'DELIVERED' || updated.paymentStatus === 'PAID')
+    ) {
+      try {
+        await deliverDigitalOrder(updated.id);
+      } catch (err) {
+        console.error('Auto delivery on PATCH failed:', err);
+      }
+    }
 
     await logActivity({
       userId: auth.user.id,

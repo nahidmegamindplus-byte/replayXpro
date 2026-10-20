@@ -97,10 +97,12 @@ export interface AIResponseResult {
   } | null;
   detectedOrder?: {
     customerName: string;
+    customerEmail?: string;
     phone: string;
     address: string;
     product: string;
     productId?: string;
+    productType?: 'PHYSICAL' | 'DIGITAL';
     quantity: number;
     price?: number;
     totalPrice?: number;
@@ -643,7 +645,7 @@ export async function generateAIReply(params: GenerateReplyParams): Promise<AIRe
     getAdminAiSettings(),
   ]);
 
-  let page = dbPage;
+  let page: any = dbPage;
   if (!page) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -685,6 +687,9 @@ export async function generateAIReply(params: GenerateReplyParams): Promise<AIRe
       images: true,
       deliveryInfo: true,
       productAiInstructions: true,
+      productType: true,
+      digitalFileUrl: true,
+      digitalInstructions: true,
       pageId: true,
     },
   });
@@ -710,6 +715,9 @@ export async function generateAIReply(params: GenerateReplyParams): Promise<AIRe
         images: true,
         deliveryInfo: true,
         productAiInstructions: true,
+        productType: true,
+        digitalFileUrl: true,
+        digitalInstructions: true,
         pageId: true,
       },
     });
@@ -729,17 +737,22 @@ export async function generateAIReply(params: GenerateReplyParams): Promise<AIRe
 
   const modelName = adminAi.model;
 
-  // Format products list for AI context with clear numbering and image status
+  // Format products list for AI context with clear numbering, product type, and image status
   const productsSummary =
     products.length > 0
       ? products
           .map((p, idx) => {
             const imgCount = parseProductImages(p).length;
-            return `- [ID: ${p.id}] (#${idx + 1}) "${p.name}" | ক্যাটাগরি: ${p.category || 'সাধারণ'} | দাম: ${
+            const isDigital = p.productType === 'DIGITAL';
+            const typeLabel = isDigital
+              ? '⚡ [ডিজিটাল পণ্য: ইনস্ট্যান্ট ইমেইল ডেলিভারি, শিপিং চার্জ ৳০]'
+              : '📦 [ফিজিক্যাল পণ্য: কুরিয়ার ডেলিভারি]';
+
+            return `- [ID: ${p.id}] (#${idx + 1}) "${p.name}" | ${typeLabel} | ক্যাটাগরি: ${p.category || 'সাধারণ'} | দাম: ${
               p.discountPrice ? `${p.discountPrice} টাকা (নিয়মিত ${p.price} টাকা)` : `${p.price} টাকা`
-            } | স্টক: ${p.stockStatus} (${p.stockQuantity} টি) | ছবি: ${imgCount > 0 ? `আছে (${imgCount}টি ছবি)` : 'নেই'} | বিবরণ: ${
+            } | স্টক: ${isDigital ? 'ইন-স্টক (ডিজিটাল)' : `${p.stockStatus} (${p.stockQuantity} টি)`} | ছবি: ${imgCount > 0 ? `আছে (${imgCount}টি ছবি)` : 'নেই'} | বিবরণ: ${
               p.description || 'N/A'
-            } | ডেলিভারি: ${p.deliveryInfo || 'স্ট্যান্ডার্ড'}${
+            } | ডেলিভারি: ${isDigital ? 'অর্ডার/পেমেন্ট কনফার্মের সাথে সাথে ইমেইলে ইনস্ট্যান্ট পাবেন' : (p.deliveryInfo || 'স্ট্যান্ডার্ড')}${
               p.productAiInstructions ? ` | বিশেষ তথ্য: ${p.productAiInstructions}` : ''
             }`;
           })
@@ -806,10 +819,37 @@ ${page.aiInstructions || 'গ্রাহকদের সাথে অত্য�
 [LIVE PRODUCT INVENTORY FOR THIS BUSINESS]
 ${productsSummary}
 
-[ORDER CAPTURE PROTOCOL]
-When a customer expresses clear purchase intent (e.g. provides name, phone number, address, or confirms they want to order/buy a specific item):
-1. Confirm the product name, quantity, price, and delivery details.
-2. Extract the customer information and output a structured JSON tag at the VERY END of your reply in this exact format:
+[ORDER CAPTURE PROTOCOL (ফিজিক্যাল ও ডিজিটাল পণ্য অর্ডার সংগ্রহের নিয়মাবলী)]
+When a customer expresses clear purchase intent (e.g. provides name, contact, address/email, or confirms they want to order/buy a specific item):
+
+A. যদি ডিজিটাল পণ্য হয় (⚡ DIGITAL PRODUCT):
+- যেমন: সফটওয়্যার, লাইসেন্স কী, ই-বুক, কোর্স, ডিজিটাল সার্ভিস, ফাইল ইত্যাদি।
+- ডেলিভারি চার্জ: সম্পূর্ণ বিনামূল্যে (৳০)। কোনো কুরিয়ার চার্জ প্রযোজ্য নয়।
+- ডেলিভারি পদ্ধতি: ইনস্ট্যান্ট ইমেইল ডেলিভারি (অর্ডার/পেমেন্ট কনফার্মের সাথে সাথেই গ্রাহকের ইমেইলে ডাউনলোড লিংক ও অ্যাক্সেস চলে যাবে)।
+- গ্রাহককে বলুন: "আপনার ডিজিটাল পণ্যটি সাথে সাথে আপনার ইমেইলে পাঠিয়ে দেওয়া হবে। অনুগ্রহ করে আপনার ইমেইল এড্রেসটি প্রদান করুন।"
+- গ্রাহকের ইমেইল পেলেই সাথে সাথে অর্ডার প্রসেস করুন।
+- আউটপুট ফরম্যাট:
+<<<ORDER_JSON
+{
+  "customerName": "Customer Name or 'Customer'",
+  "customerEmail": "customer@email.com",
+  "phone": "01XXXXXXXXX or N/A",
+  "address": "ডিজিটাল ডেলিভারি (ইমেইল)",
+  "product": "Product Name",
+  "productId": "Product ID if matched from inventory",
+  "productType": "DIGITAL",
+  "quantity": 1,
+  "price": 500,
+  "totalPrice": 500
+}
+ORDER_JSON>>>
+
+B. যদি ফিজিক্যাল পণ্য হয় (📦 PHYSICAL PRODUCT):
+- যেমন: জামাকাপড়, গ্যাজেট, ঘড়ি, জুতা, কসমেটিক্স ইত্যাদি।
+- ডেলিভারি পদ্ধতি: কুরিয়ার সার্ভিস (ক্যাশ অন ডেলিভারি / বিকাশ)।
+- ডেলিভারি চার্জ: পেজের ডেলিভারি পলিসি অনুযায়ী (যেমন: ঢাকার ভেতরে ৭০ টাকা, বাইরে ১৩০ টাকা)।
+- গ্রাহকের মোবাইল নম্বর এবং পূর্ণাঙ্গ ডেলিভারি ঠিকানা প্রয়োজন।
+- আউটপুট ফরম্যাট:
 <<<ORDER_JSON
 {
   "customerName": "Customer Name or 'Customer'",
@@ -817,12 +857,14 @@ When a customer expresses clear purchase intent (e.g. provides name, phone numbe
   "address": "Customer delivery address",
   "product": "Product Name",
   "productId": "Product ID if matched from inventory",
+  "productType": "PHYSICAL",
   "quantity": 1,
   "price": 1200,
   "totalPrice": 1270
 }
 ORDER_JSON>>>
-If phone or address is missing, politely ask the customer for their mobile number and full delivery address.
+
+সতর্কতা: ফিজিক্যাল পণ্যে ফোন ও ঠিকানা এবং ডিজিটাল পণ্যে ইমেইল এড্রেস না পেলে গ্রাহককে মিষ্টি ও নম্র ভাষায় সেটি প্রদানের অনুরোধ করুন।
 `.trim();
 
   let replyText = '';

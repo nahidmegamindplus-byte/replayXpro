@@ -135,6 +135,9 @@ model Product {
   images                String?       // JSON array of multiple image URLs / base64 strings
   deliveryInfo          String?
   productAiInstructions String?
+  productType           String        @default("PHYSICAL") // PHYSICAL, DIGITAL
+  digitalFileUrl        String?       // Download link, Google Drive, file URL
+  digitalInstructions   String?       // License key, credentials, or instant activation guide sent via email
   isActive              Boolean       @default(true)
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
@@ -145,6 +148,7 @@ model Product {
   @@index([userId])
   @@index([pageId])
   @@index([name])
+  @@index([productType])
 }
 
 model Conversation {
@@ -216,10 +220,15 @@ model Order {
   pageId          String
   conversationId  String?
   customerName    String
+  customerEmail   String?       // Required for instant digital delivery
   phone           String
   address         String
   product         String
   productId       String?
+  productType     String        @default("PHYSICAL") // PHYSICAL, DIGITAL
+  isDigitalDelivered Boolean    @default(false)
+  digitalDeliveredAt DateTime?
+  paymentStatus   String        @default("UNPAID") // UNPAID, PAID
   quantity        Int           @default(1)
   price           Float         @default(0)
   totalPrice      Float         @default(0)
@@ -242,6 +251,8 @@ model Order {
   @@index([pageId])
   @@index([status])
   @@index([phone])
+  @@index([customerEmail])
+  @@index([productType])
   @@index([courierTrackingCode])
   @@index([createdAt])
 }

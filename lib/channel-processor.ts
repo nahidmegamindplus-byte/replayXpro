@@ -383,29 +383,53 @@ export async function processIncomingChannelMessage(
           ? 'TELEGRAM_AI'
           : 'MESSENGER_AI';
 
+      let resolvedProductType: 'PHYSICAL' | 'DIGITAL' = detected.productType === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL';
+      if (detected.productId) {
+        const dbProd = await prisma.product.findUnique({
+          where: { id: detected.productId },
+          select: { productType: true },
+        });
+        if (dbProd?.productType) {
+          resolvedProductType = dbProd.productType === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL';
+        }
+      }
+      const isDigital = resolvedProductType === 'DIGITAL';
+
       const newOrder = await prisma.order.create({
         data: {
           userId: page.userId,
           pageId: page.id,
           conversationId: conversation.id,
           customerName: detected.customerName,
-          phone: detected.phone,
-          address: detected.address,
+          customerEmail: detected.customerEmail ? detected.customerEmail.trim().toLowerCase() : null,
+          phone: detected.phone || (detected.customerEmail ? detected.customerEmail : 'N/A'),
+          address: detected.address || (isDigital ? 'ডিজিটাল ডেলিভারি (ইমেইল)' : 'N/A'),
           product: detected.product,
           productId: detected.productId || null,
+          productType: resolvedProductType,
           quantity: detected.quantity || 1,
           price: detected.price || 0,
           totalPrice: detected.totalPrice || 0,
-          status: 'PENDING',
+          status: isDigital ? 'CONFIRMED' : 'PENDING',
+          paymentStatus: isDigital ? 'PAID' : 'PENDING',
           source: orderSource,
         },
       });
+
+      if (isDigital) {
+        try {
+          const { deliverDigitalOrder } = await import('@/lib/digital-delivery');
+          await deliverDigitalOrder(newOrder.id);
+        } catch (delivErr) {
+          serverLogger.error('Failed auto digital fulfillment in channel-processor:', delivErr);
+        }
+      }
 
       await logActivity({
         userId: page.userId,
         pageId: page.id,
         action: 'ORDER_CAPTURED_BY_AI',
-        description: `AI (${channel}) স্বয়ংক্রিয়ভাবে নতুন অর্ডার ক্যাপচার করেছে: #${newOrder.id.slice(0, 8)} (${detected.customerName} - ${detected.phone})`,
+        description: `AI (${channel}) স্বয়ংক্রিয়ভাবে নতুন ${isDigital ? 'ডিজিটাল' : 'ফিজিক্যাল'} অর্ডার ক্যাপচার করেছে: #${newOrder.id.slice(0, 8)} (${detected.customerName} - ${newOrder.customerEmail || detected.phone})`,
       });
     }
 

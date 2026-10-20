@@ -126,6 +126,9 @@ export async function POST(req: NextRequest) {
       deliveryInfo,
       productAiInstructions,
       pageId,
+      productType,
+      digitalFileUrl,
+      digitalInstructions,
     } = body;
 
     if (!name || typeof name !== 'string' || !name.trim()) {
@@ -167,6 +170,11 @@ export async function POST(req: NextRequest) {
 
     const primaryImageUrl = cleanImagesArray.length > 0 ? cleanImagesArray[0] : (imageUrl ? imageUrl.trim() : null);
 
+    const isDigital = productType === 'DIGITAL';
+    const computedDeliveryInfo = isDigital
+      ? (deliveryInfo ? deliveryInfo.trim() : 'ইনস্ট্যান্ট ইমেইল ডেলিভারি (৳০)')
+      : (deliveryInfo ? deliveryInfo.trim() : null);
+
     const product = await prisma.product.create({
       data: {
         userId: auth.user.id,
@@ -177,12 +185,15 @@ export async function POST(req: NextRequest) {
         category: category ? category.trim() : null,
         price: numericPrice,
         discountPrice: numericDiscount && numericDiscount > 0 ? numericDiscount : null,
-        stockQuantity: numericQty >= 0 ? numericQty : 0,
-        stockStatus: stockStatus || (numericQty > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK'),
+        stockQuantity: isDigital ? 999999 : (numericQty >= 0 ? numericQty : 0),
+        stockStatus: stockStatus || (isDigital ? 'IN_STOCK' : (numericQty > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK')),
         imageUrl: primaryImageUrl,
         images: cleanImagesArray.length > 0 ? JSON.stringify(cleanImagesArray) : null,
-        deliveryInfo: deliveryInfo ? deliveryInfo.trim() : null,
+        deliveryInfo: computedDeliveryInfo,
         productAiInstructions: productAiInstructions ? productAiInstructions.trim() : null,
+        productType: isDigital ? 'DIGITAL' : 'PHYSICAL',
+        digitalFileUrl: isDigital && digitalFileUrl ? digitalFileUrl.trim() : null,
+        digitalInstructions: isDigital && digitalInstructions ? digitalInstructions.trim() : null,
         isActive: true,
       },
     });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import { logActivity } from '@/lib/logger';
+import { deliverDigitalOrder } from '@/lib/digital-delivery';
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -12,6 +13,7 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get('search') || '';
     const status = searchParams.get('status') || '';
     const pageId = searchParams.get('pageId') || '';
+    const productType = searchParams.get('productType') || '';
     const page = parseInt(searchParams.get('page') || '1', 10);
     const limit = parseInt(searchParams.get('limit') || '50', 10);
     const skip = (page - 1) * limit;
@@ -21,6 +23,7 @@ export async function GET(req: NextRequest) {
     if (search) {
       where.OR = [
         { customerName: { contains: search, mode: 'insensitive' } },
+        { customerEmail: { contains: search, mode: 'insensitive' } },
         { phone: { contains: search, mode: 'insensitive' } },
         { address: { contains: search, mode: 'insensitive' } },
         { product: { contains: search, mode: 'insensitive' } },
@@ -29,6 +32,10 @@ export async function GET(req: NextRequest) {
 
     if (status && status !== 'ALL') {
       where.status = status;
+    }
+
+    if (productType && productType !== 'ALL') {
+      where.productType = productType;
     }
 
     if (pageId && pageId !== 'ALL') {
@@ -99,6 +106,7 @@ export async function POST(req: NextRequest) {
       pageId,
       conversationId,
       customerName,
+      customerEmail,
       phone,
       address,
       product,
@@ -109,11 +117,43 @@ export async function POST(req: NextRequest) {
       notes,
       status,
       source,
+      productType,
+      paymentStatus,
     } = body;
 
-    if (!customerName || !phone || !address || !product || !pageId) {
+    // Check product type if product exists in database
+    let resolvedProductType = productType || 'PHYSICAL';
+    if (productId) {
+      const dbProduct = await prisma.product.findUnique({
+        where: { id: productId },
+        select: { productType: true },
+      });
+      if (dbProduct?.productType) {
+        resolvedProductType = dbProduct.productType;
+      }
+    }
+
+    const isDigital = resolvedProductType === 'DIGITAL';
+
+    if (!customerName || !product || !pageId) {
       return NextResponse.json(
-        { success: false, error: 'গ্রাহকের নাম, ফোন নম্বর, ঠিকানা, পণ্য এবং পেজ নির্বাচন আবশ্যক।' },
+        { success: false, error: 'গ্রাহকের নাম, পণ্য এবং পেজ নির্বাচন আবশ্যক।' },
+        { status: 400 }
+      );
+    }
+
+    // For physical products, phone and address are required
+    if (!isDigital && (!phone || !address)) {
+      return NextResponse.json(
+        { success: false, error: 'ফিজিক্যাল পণ্যের ক্ষেত্রে ফোন নম্বর ও ডেলিভারি ঠিকানা আবশ্যক।' },
+        { status: 400 }
+      );
+    }
+
+    // For digital products, customerEmail is strongly required
+    if (isDigital && !customerEmail) {
+      return NextResponse.json(
+        { success: false, error: 'ডিজিটাল পণ্যের ইনস্ট্যান্ট ডেলিভারির জন্য গ্রাহকের ইমেইল এড্রেস আবশ্যক।' },
         { status: 400 }
       );
     }
@@ -133,30 +173,46 @@ export async function POST(req: NextRequest) {
     const unitPrice = price ? parseFloat(price) : 0;
     const total = totalPrice ? parseFloat(totalPrice) : unitPrice * qty;
 
+    const initialStatus = status || (isDigital ? 'CONFIRMED' : 'PENDING');
+    const initialPaymentStatus = paymentStatus || (isDigital ? 'PAID' : 'PENDING');
+
     const order = await prisma.order.create({
       data: {
         userId: auth.user.id,
         pageId: page.id,
         conversationId: conversationId || null,
         customerName: customerName.trim(),
-        phone: phone.trim(),
-        address: address.trim(),
+        customerEmail: customerEmail ? customerEmail.trim().toLowerCase() : null,
+        phone: phone ? phone.trim() : (customerEmail ? customerEmail.trim() : 'N/A'),
+        address: address ? address.trim() : (isDigital ? 'ডিজিটাল ডেলিভারি (ইমেইল)' : 'N/A'),
         product: product.trim(),
         productId: productId || null,
+        productType: resolvedProductType,
         quantity: qty,
         price: unitPrice,
         totalPrice: total,
         notes: notes ? notes.trim() : null,
-        status: status || 'PENDING',
+        status: initialStatus,
+        paymentStatus: initialPaymentStatus,
         source: source || 'MANUAL',
       },
     });
+
+    // Auto-fulfill if digital product
+    let digitalFulfillmentResult = null;
+    if (isDigital && order.customerEmail) {
+      try {
+        digitalFulfillmentResult = await deliverDigitalOrder(order.id);
+      } catch (err) {
+        console.error('Digital auto-fulfillment error on creation:', err);
+      }
+    }
 
     await logActivity({
       userId: auth.user.id,
       pageId: page.id,
       action: 'ORDER_CREATED',
-      description: `নতুন অর্ডার তৈরি করা হয়েছে: #${order.id.slice(0, 8)} (${order.customerName} - ${order.totalPrice} টাকা)`,
+      description: `নতুন ${isDigital ? 'ডিজিটাল' : 'ফিজিক্যাল'} অর্ডার তৈরি: #${order.id.slice(0, 8)} (${order.customerName} - ${order.totalPrice} টাকা)`,
     });
 
     return NextResponse.json({

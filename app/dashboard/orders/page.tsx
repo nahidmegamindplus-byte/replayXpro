@@ -25,6 +25,8 @@ import {
   ExternalLink,
   FileSpreadsheet,
   Send,
+  Zap,
+  Mail,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 import { apiFetch } from '@/lib/api-client';
@@ -81,14 +83,17 @@ export default function OrdersPage() {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+  const [deliveringDigitalId, setDeliveringDigitalId] = useState<string | null>(null);
 
   // Add Form State
   const [addForm, setAddForm] = useState({
     pageId: '',
     customerName: '',
+    customerEmail: '',
     phone: '',
     address: '',
     product: '',
+    productType: 'PHYSICAL' as 'PHYSICAL' | 'DIGITAL',
     quantity: '1',
     price: '',
     notes: '',
@@ -99,14 +104,36 @@ export default function OrdersPage() {
   const [editForm, setEditForm] = useState({
     id: '',
     customerName: '',
+    customerEmail: '',
     phone: '',
     address: '',
     product: '',
+    productType: 'PHYSICAL' as 'PHYSICAL' | 'DIGITAL',
     quantity: '1',
     totalPrice: '',
     notes: '',
     status: 'PENDING',
   });
+
+  const handleDeliverDigital = async (orderId: string) => {
+    try {
+      setDeliveringDigitalId(orderId);
+      const res = await fetch(`/api/orders/${orderId}/deliver-digital`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success(data.message || 'ডিজিটাল প্রোডাক্টের ডেলিভারি ইমেইল সফলভাবে পাঠানো হয়েছে!');
+        fetchOrders();
+      } else {
+        toast.error(data.error || 'ডিজিটাল ডেলিভারি পাঠাতে ব্যর্থ হয়েছে।');
+      }
+    } catch (err) {
+      toast.error('সার্ভারে যোগাযোগ করা যায়নি।');
+    } finally {
+      setDeliveringDigitalId(null);
+    }
+  };
 
   const fetchOrders = async () => {
     try {
@@ -291,8 +318,15 @@ export default function OrdersPage() {
 
   const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!addForm.customerName.trim() || !addForm.phone.trim() || !addForm.address.trim()) {
-      toast.error('গ্রাহকের নাম, মোবাইল নম্বর এবং ঠিকানা পূরণ করুন।');
+    const isDigital = addForm.productType === 'DIGITAL';
+
+    if (!addForm.customerName.trim() || (!isDigital && (!addForm.phone.trim() || !addForm.address.trim()))) {
+      toast.error(isDigital ? 'গ্রাহকের নাম পূরণ করুন।' : 'গ্রাহকের নাম, মোবাইল নম্বর এবং ঠিকানা পূরণ করুন।');
+      return;
+    }
+
+    if (isDigital && !addForm.customerEmail.trim()) {
+      toast.error('ডিজিটাল প্রোডাক্টের ইনস্ট্যান্ট ডেলিভারির জন্য গ্রাহকের ইমেইল এড্রেস আবশ্যক।');
       return;
     }
 
@@ -314,14 +348,16 @@ export default function OrdersPage() {
 
       const data = await res.json();
       if (data.success) {
-        toast.success('অর্ডার তৈরি হয়েছে!');
+        toast.success(isDigital ? 'ডিজিটাল অর্ডার তৈরি ও ইমেইল পাঠানো হয়েছে!' : 'অর্ডার তৈরি হয়েছে!');
         setShowAddModal(false);
         setAddForm({
           pageId: pages[0]?.id || '',
           customerName: '',
+          customerEmail: '',
           phone: '',
           address: '',
           product: '',
+          productType: 'PHYSICAL',
           quantity: '1',
           price: '',
           notes: '',
@@ -342,9 +378,11 @@ export default function OrdersPage() {
     setEditForm({
       id: order.id,
       customerName: order.customerName || '',
+      customerEmail: order.customerEmail || '',
       phone: order.phone || '',
       address: order.address || '',
       product: order.product || '',
+      productType: order.productType || 'PHYSICAL',
       quantity: order.quantity ? order.quantity.toString() : '1',
       totalPrice: order.totalPrice ? order.totalPrice.toString() : '0',
       notes: order.notes || '',
@@ -364,9 +402,11 @@ export default function OrdersPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customerName: editForm.customerName.trim(),
+          customerEmail: editForm.customerEmail ? editForm.customerEmail.trim() : null,
           phone: editForm.phone.trim(),
           address: editForm.address.trim(),
           product: editForm.product.trim(),
+          productType: editForm.productType,
           quantity: parseInt(editForm.quantity || '1', 10),
           totalPrice: parseFloat(editForm.totalPrice || '0'),
           notes: editForm.notes.trim() || null,
@@ -542,9 +582,15 @@ export default function OrdersPage() {
 
                     <td className="py-3.5 px-4">
                       <div className="font-semibold text-slate-900">{o.customerName}</div>
+                      {o.customerEmail && (
+                        <div className="text-[11px] text-indigo-600 font-mono flex items-center gap-1 mt-0.5" title="গ্রাহকের ইমেইল">
+                          <Mail className="w-3 h-3 text-indigo-500 shrink-0" />
+                          <span className="truncate max-w-[140px]">{o.customerEmail}</span>
+                        </div>
+                      )}
                       <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5 mt-0.5">
-                        <span>{o.phone}</span>
-                        {o.phone && (
+                        <span>{o.phone || 'N/A'}</span>
+                        {o.phone && o.phone !== 'N/A' && (
                           <a
                             href={`https://wa.me/${o.phone.replace(/[^\d]/g, '').replace(/^01/, '8801')}`}
                             target="_blank"
@@ -559,8 +605,19 @@ export default function OrdersPage() {
                     </td>
 
                     <td className="py-3.5 px-4">
-                      <div className="font-medium text-slate-800">{o.product}</div>
-                      <div className="text-[11px] text-slate-500">{o.quantity} টি</div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {o.productType === 'DIGITAL' ? (
+                          <span className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] font-bold inline-flex items-center gap-0.5 shrink-0">
+                            <Zap className="w-3 h-3 text-amber-600" /> ডিজিটাল
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-semibold inline-flex items-center gap-0.5 shrink-0">
+                            <Truck className="w-3 h-3 text-slate-500" /> ফিজিক্যাল
+                          </span>
+                        )}
+                        <span className="font-medium text-slate-800 truncate max-w-[150px]">{o.product}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">{o.quantity} টি</div>
                     </td>
 
                     <td className="py-3.5 px-4 font-bold text-slate-900 font-mono">
@@ -596,7 +653,37 @@ export default function OrdersPage() {
                     </td>
 
                     <td className="py-3.5 px-4">
-                      {o.courierTrackingCode ? (
+                      {o.productType === 'DIGITAL' ? (
+                        <div className="flex flex-col gap-1 items-start">
+                          {o.isDigitalDelivered ? (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <span>ইমেইল ডেলিভার্ড ✓</span>
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 inline-flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-amber-600" />
+                              <span>ইমেইল পেন্ডিং</span>
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleDeliverDigital(o.id)}
+                            disabled={deliveringDigitalId === o.id}
+                            className="px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 text-[10px] font-bold border border-amber-200 inline-flex items-center gap-1 transition-colors disabled:opacity-50 shadow-2xs"
+                            title="গ্রাহকের কাছে ডিজিটাল প্রোডাক্টের ইমেইল পাঠান বা পুনরায় পাঠান"
+                          >
+                            <Send className={`w-3 h-3 text-amber-600 ${deliveringDigitalId === o.id ? 'animate-bounce' : ''}`} />
+                            <span>
+                              {deliveringDigitalId === o.id
+                                ? 'পাঠানো হচ্ছে...'
+                                : o.isDigitalDelivered
+                                ? 'পুনরায় পাঠান'
+                                : 'ইমেইল পাঠান'}
+                            </span>
+                          </button>
+                        </div>
+                      ) : o.courierTrackingCode ? (
                         <div className="flex flex-col gap-1 items-start">
                           <div className="flex items-center gap-1">
                             <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 font-mono ${
@@ -822,34 +909,87 @@ export default function OrdersPage() {
                 </span>
               </div>
 
-              {/* Courier Delivery Section */}
+              {/* Courier Delivery Section or Digital Delivery Section */}
               <div className="border-t border-slate-200 pt-3">
-                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/90 flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                      <Truck className={`w-4 h-4 ${selectedOrder.courierName === 'PATHAO' ? 'text-rose-600' : 'text-indigo-600'}`} />
-                      <span>
-                        {selectedOrder.courierName === 'PATHAO'
-                          ? 'পাঠাও কুরিয়ার (Pathao Aladdin)'
-                          : selectedOrder.courierName === 'STEADFAST'
-                          ? 'Steadfast Courier'
-                          : 'কুরিয়ার ডেলিভারি (Courier Delivery)'}
+                {selectedOrder.productType === 'DIGITAL' ? (
+                  <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                        <Zap className="w-4 h-4 text-amber-600" />
+                        <span>ডিজিটাল প্রোডাক্ট ডেলিভারি (Digital Fulfillment)</span>
                       </span>
-                    </span>
-                    {selectedOrder.courierTrackingCode ? (
-                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
-                        selectedOrder.courierName === 'PATHAO'
-                          ? 'bg-rose-100 text-rose-800 border-rose-200'
-                          : 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                      }`}>
-                        {selectedOrder.courierStatus || 'ইন-রিভিউ'}
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-200 text-slate-600">
-                        বুকিং করা হয়নি
-                      </span>
-                    )}
+                      {selectedOrder.isDigitalDelivered ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span>ইমেইলে পাঠানো হয়েছে</span>
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-200 text-amber-800">
+                          ডেলিভারি বাকি
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-1.5 text-xs text-slate-700 pt-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500">গ্রাহকের ইমেইল:</span>
+                        <span className="font-mono font-bold text-indigo-700">
+                          {selectedOrder.customerEmail || 'ইমেইল নেই'}
+                        </span>
+                      </div>
+                      {selectedOrder.digitalDeliveredAt && (
+                        <div className="flex items-center justify-between text-[11px] text-slate-500">
+                          <span>ডেলিভারির সময়:</span>
+                          <span>{new Date(selectedOrder.digitalDeliveredAt).toLocaleString('bn-BD')}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-2 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => handleDeliverDigital(selectedOrder.id)}
+                        disabled={deliveringDigitalId === selectedOrder.id}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs transition-colors disabled:opacity-50"
+                      >
+                        <Send className={`w-3.5 h-3.5 ${deliveringDigitalId === selectedOrder.id ? 'animate-bounce' : ''}`} />
+                        <span>
+                          {deliveringDigitalId === selectedOrder.id
+                            ? 'পাঠানো হচ্ছে...'
+                            : selectedOrder.isDigitalDelivered
+                            ? 'পুনরায় ইমেইল পাঠান'
+                            : 'এখনই ইমেইল ডেলিভারি পাঠান'}
+                        </span>
+                      </button>
+                    </div>
                   </div>
+                ) : (
+                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/90 flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                        <Truck className={`w-4 h-4 ${selectedOrder.courierName === 'PATHAO' ? 'text-rose-600' : 'text-indigo-600'}`} />
+                        <span>
+                          {selectedOrder.courierName === 'PATHAO'
+                            ? 'পাঠাও কুরিয়ার (Pathao Aladdin)'
+                            : selectedOrder.courierName === 'STEADFAST'
+                            ? 'Steadfast Courier'
+                            : 'কুরিয়ার ডেলিভারি (Courier Delivery)'}
+                        </span>
+                      </span>
+                      {selectedOrder.courierTrackingCode ? (
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                          selectedOrder.courierName === 'PATHAO'
+                            ? 'bg-rose-100 text-rose-800 border-rose-200'
+                            : 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                        }`}>
+                          {selectedOrder.courierStatus || 'ইন-রিভিউ'}
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-200 text-slate-600">
+                          বুকিং করা হয়নি
+                        </span>
+                      )}
+                    </div>
 
                   {selectedOrder.courierTrackingCode ? (
                     <div className="space-y-1.5 pt-1 text-xs">
@@ -914,8 +1054,9 @@ export default function OrdersPage() {
                     </div>
                   )}
                 </div>
-              </div>
+              )}
             </div>
+          </div>
 
             <div className="flex items-center justify-between gap-3 pt-4 border-t border-slate-100">
               <button
@@ -963,6 +1104,43 @@ export default function OrdersPage() {
             <p className="text-xs text-slate-500 mb-6">#{editForm.id.slice(0, 8)}</p>
 
             <form onSubmit={handleSaveEdit} className="space-y-3.5">
+              {/* Product Type Selector */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">পণ্যের ধরন</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditForm({ ...editForm, productType: 'PHYSICAL' })}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                      editForm.productType === 'PHYSICAL'
+                        ? 'bg-indigo-50 border-indigo-500 text-indigo-700 shadow-2xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Truck className="w-3.5 h-3.5" />
+                    <span>ফিজিক্যাল পণ্য</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditForm({
+                        ...editForm,
+                        productType: 'DIGITAL',
+                        address: editForm.address || 'ডিজিটাল ডেলিভারি (ইমেইল)',
+                      })
+                    }
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                      editForm.productType === 'DIGITAL'
+                        ? 'bg-amber-50 border-amber-500 text-amber-800 shadow-2xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>ডিজিটাল পণ্য</span>
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">গ্রাহকের নাম *</label>
                 <input
@@ -975,10 +1153,26 @@ export default function OrdersPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">মোবাইল ফোন নম্বর *</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  গ্রাহকের ইমেইল এড্রেস {editForm.productType === 'DIGITAL' && <span className="text-rose-500">* (ইনস্ট্যান্ট ডেলিভারি)</span>}
+                </label>
+                <input
+                  type="email"
+                  required={editForm.productType === 'DIGITAL'}
+                  value={editForm.customerEmail}
+                  onChange={(e) => setEditForm({ ...editForm, customerEmail: e.target.value })}
+                  placeholder="customer@gmail.com"
+                  className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-slate-900 text-xs font-mono focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/20"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  মোবাইল ফোন নম্বর {editForm.productType === 'PHYSICAL' && '*'}
+                </label>
                 <input
                   type="tel"
-                  required
+                  required={editForm.productType === 'PHYSICAL'}
                   value={editForm.phone}
                   onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
                   className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-slate-900 text-xs font-mono focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/20"
@@ -1088,6 +1282,49 @@ export default function OrdersPage() {
             <p className="text-xs text-slate-500 mb-6">কাস্টমারের তথ্য ও পণ্যের বিবরণ দিয়ে অর্ডার বুক করুন</p>
 
             <form onSubmit={handleCreateOrder} className="space-y-3.5">
+              {/* Product Type Selector */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">পণ্যের ধরন *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAddForm({
+                        ...addForm,
+                        productType: 'PHYSICAL',
+                        address: addForm.address === 'ডিজিটাল ডেলিভারি (ইমেইল)' ? '' : addForm.address,
+                      })
+                    }
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                      addForm.productType === 'PHYSICAL'
+                        ? 'bg-indigo-50 border-indigo-500 text-indigo-700 shadow-2xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Truck className="w-3.5 h-3.5" />
+                    <span>📦 ফিজিক্যাল পণ্য</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAddForm({
+                        ...addForm,
+                        productType: 'DIGITAL',
+                        address: addForm.address || 'ডিজিটাল ডেলিভারি (ইমেইল)',
+                      })
+                    }
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
+                      addForm.productType === 'DIGITAL'
+                        ? 'bg-amber-50 border-amber-500 text-amber-800 shadow-2xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>⚡ ডিজিটাল পণ্য</span>
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">ফেসবুক পেজ *</label>
                 <select
@@ -1118,25 +1355,50 @@ export default function OrdersPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">মোবাইল ফোন নম্বর *</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>গ্রাহকের ইমেইল এড্রেস</span>
+                  {addForm.productType === 'DIGITAL' && (
+                    <span className="text-[11px] text-amber-700 font-bold">⚡ ইনস্ট্যান্ট ডেলিভারির জন্য আবশ্যক</span>
+                  )}
+                </label>
                 <input
-                  type="tel"
-                  required
-                  value={addForm.phone}
-                  onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })}
-                  placeholder="01XXXXXXXXX"
-                  className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-slate-900 text-xs focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/20"
+                  type="email"
+                  required={addForm.productType === 'DIGITAL'}
+                  value={addForm.customerEmail}
+                  onChange={(e) => setAddForm({ ...addForm, customerEmail: e.target.value })}
+                  placeholder="customer@gmail.com"
+                  className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-slate-900 text-xs font-mono focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/20"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">ডেলিভারির পূর্ণ ঠিকানা *</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  মোবাইল ফোন নম্বর {addForm.productType === 'PHYSICAL' && '*'}
+                </label>
+                <input
+                  type="tel"
+                  required={addForm.productType === 'PHYSICAL'}
+                  value={addForm.phone}
+                  onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })}
+                  placeholder="01XXXXXXXXX"
+                  className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-slate-900 text-xs font-mono focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/20"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  ডেলিভারির পূর্ণ ঠিকানা {addForm.productType === 'PHYSICAL' && '*'}
+                </label>
                 <textarea
                   rows={2}
-                  required
+                  required={addForm.productType === 'PHYSICAL'}
                   value={addForm.address}
                   onChange={(e) => setAddForm({ ...addForm, address: e.target.value })}
-                  placeholder="হাউজ নং, রোড, এরিয়া, জেলা"
+                  placeholder={
+                    addForm.productType === 'DIGITAL'
+                      ? 'ডিজিটাল ডেলিভারি (ইমেইল)'
+                      : 'হাউজ নং, রোড, এরিয়া, জেলা'
+                  }
                   className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-slate-900 text-xs focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/20"
                 />
               </div>

@@ -114,6 +114,15 @@ export async function PUT(
     }
     if (body.deliveryInfo !== undefined) updateData.deliveryInfo = body.deliveryInfo ? body.deliveryInfo.trim() : null;
     if (body.productAiInstructions !== undefined) updateData.productAiInstructions = body.productAiInstructions ? body.productAiInstructions.trim() : null;
+    if (body.productType !== undefined) {
+      updateData.productType = body.productType === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL';
+    }
+    if (body.digitalFileUrl !== undefined) {
+      updateData.digitalFileUrl = body.digitalFileUrl ? body.digitalFileUrl.trim() : null;
+    }
+    if (body.digitalInstructions !== undefined) {
+      updateData.digitalInstructions = body.digitalInstructions ? body.digitalInstructions.trim() : null;
+    }
     if (body.isActive !== undefined) updateData.isActive = Boolean(body.isActive);
     if (body.pageId !== undefined) {
       if (body.pageId && body.pageId !== 'ALL') {
