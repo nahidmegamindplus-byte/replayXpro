@@ -1,0 +1,120 @@
+# ==============================================================================
+# ReplyX AI — Ultra-Resilient Hostinger (LiteSpeed / Apache / Passenger / Proxy) Config
+# ==============================================================================
+
+# 1. Phusion Passenger Configuration (Hostinger Cloud / cPanel / hPanel Node.js Selector)
+<IfModule mod_passenger.c>
+  PassengerNodejs /usr/bin/node
+  PassengerAppType node
+  PassengerAppRoot %{DOCUMENT_ROOT}
+  PassengerStartupFile server.js
+  PassengerRestartDir tmp
+  PassengerFriendlyErrorPages off
+</IfModule>
+
+# 2. URL Rewrite Rules
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # A. Force HTTPS on all browsers
+  RewriteCond %{HTTPS} off
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+  # B. Protect sensitive files & SQLite database from direct browser downloads
+  RewriteRule ^\.env - [F,L,NC]
+  RewriteRule ^prisma/.*\.db - [F,L,NC]
+  RewriteRule ^prisma/.*\.db-journal - [F,L,NC]
+  RewriteRule ^prisma/.*\.db-wal - [F,L,NC]
+  RewriteRule ^prisma/.*\.db-shm - [F,L,NC]
+  RewriteRule ^package\.json$ - [F,L,NC]
+  RewriteRule ^package-lock\.json$ - [F,L,NC]
+  RewriteRule ^tsconfig\.json$ - [F,L,NC]
+
+  # C. Direct access to existing physical static files
+  RewriteCond %{REQUEST_FILENAME} -f
+  RewriteRule ^ - [L]
+
+  # D. Direct delivery for Next.js static chunks in .next/static or _next/static
+  RewriteCond %{DOCUMENT_ROOT}/.next/static/$1 -f
+  RewriteRule ^_next/static/(.*)$ .next/static/$1 [L]
+
+  RewriteCond %{DOCUMENT_ROOT}/_next/static/$1 -f
+  RewriteRule ^_next/static/(.*)$ _next/static/$1 [L]
+
+  # E. Direct delivery for global.css
+  RewriteCond %{DOCUMENT_ROOT}/public/global.css -f
+  RewriteRule ^global\.css$ public/global.css [L]
+
+  # F. Direct delivery for public folder assets
+  RewriteCond %{DOCUMENT_ROOT}/public/$1 -f
+  RewriteRule ^(.*)$ public/$1 [L]
+
+  # G. Reverse Proxy Fallback for Hostinger Node.js / Custom Server (if mod_proxy is active)
+  <IfModule mod_proxy.c>
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L]
+  </IfModule>
+</IfModule>
+
+# 3. Exact MIME Types for 100% Cross-Browser CSS / JS / Font Execution
+<IfModule mod_mime.c>
+  AddType text/css .css
+  AddType application/javascript .js
+  AddType application/javascript .mjs
+  AddType application/json .json
+  AddType image/svg+xml .svg
+  AddType image/x-icon .ico
+  AddType image/webp .webp
+  AddType image/png .png
+  AddType image/jpeg .jpg .jpeg
+  AddType font/woff .woff
+  AddType font/woff2 .woff2
+  AddType font/ttf .ttf
+  AddType font/otf .otf
+  AddType font/eot .eot
+</IfModule>
+
+# 4. Multi-Browser Smart Caching & CORS Headers
+# - Next.js hashed assets: 1 Year immutable cache
+# - HTML, API, and unhashed global.css: Always revalidated on update to prevent broken layout after deploy
+<IfModule mod_headers.c>
+  # HTML pages & API routes: never cache old chunk references
+  <FilesMatch "\.(html|htm)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate, max-age=0"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+    Header set X-Content-Type-Options "nosniff"
+  </FilesMatch>
+
+  # Next.js Static Chunks (immutable with hash)
+  <FilesMatch "\.(woff|woff2|ttf|eot)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+    Header set Access-Control-Allow-Origin "*"
+    Header set Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+    Header set X-Content-Type-Options "nosniff"
+  </FilesMatch>
+
+  # Images & SVG
+  <FilesMatch "\.(svg|png|jpg|jpeg|webp|gif|ico)$">
+    Header set Cache-Control "public, max-age=2592000, must-revalidate"
+    Header set Access-Control-Allow-Origin "*"
+    Header set Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+  </FilesMatch>
+
+  # Global unhashed CSS & JS: revalidate so new GitHub deployments take effect immediately
+  <FilesMatch "\.(css|js|mjs)$">
+    Header set Access-Control-Allow-Origin "*"
+    Header set Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+    Header set X-Content-Type-Options "nosniff"
+  </FilesMatch>
+</IfModule>
+
+# 5. Gzip & Deflate Compression for Ultra-Fast Loading
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/plain text/html text/xml text/css application/xml application/xhtml+xml application/rss+xml application/javascript application/x-javascript application/json image/svg+xml font/woff font/woff2
+</IfModule>
+
+

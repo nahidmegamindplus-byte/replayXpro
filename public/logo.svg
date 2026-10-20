@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 80" fill="none">
+  <defs>
+    <linearGradient id="replyx-brand-grad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0052FF"/>
+      <stop offset="50%" stop-color="#0080FF"/>
+      <stop offset="100%" stop-color="#00D2FF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Group: Icon (transformed) -->
+  <g transform="translate(4, 2) scale(0.76)">
+    <!-- Speed trails -->
+    <g stroke="url(#replyx-brand-grad)" stroke-width="4" stroke-linecap="round">
+      <path d="M68 18 L88 18" />
+      <path d="M74 27 L92 27" />
+      <path d="M78 36 L86 36" />
+    </g>
+
+    <!-- Main Chat Bubble -->
+    <path d="M52 14 C28 14 10 30 10 50 C10 61 15 70 23 77 L15 93 L36 85 C41 86.5 46.5 87.5 52 87.5 C76 87.5 94 70 94 50 C94 30 76 14 52 14 Z" fill="url(#replyx-brand-grad)" />
+
+    <!-- Robot Antenna -->
+    <circle cx="52" cy="27" r="3.5" fill="#FFFFFF" />
+    <path d="M52 30.5 L52 36" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" />
+
+    <!-- Robot Ear Knobs -->
+    <rect x="25" y="47" width="5" height="15" rx="2.5" fill="#FFFFFF" />
+    <rect x="74" y="47" width="5" height="15" rx="2.5" fill="#FFFFFF" />
+
+    <!-- Robot Head Body -->
+    <rect x="28" y="36" width="48" height="36" rx="14" fill="#FFFFFF" />
+
+    <!-- Robot Face Screen -->
+    <rect x="33" y="41" width="38" height="26" rx="9" fill="#0B192C" />
+
+    <!-- Cute Smiling Eyes -->
+    <path d="M40 54 Q44 48 48 54" stroke="#00D2FF" stroke-width="3.5" stroke-linecap="round" fill="none" />
+    <path d="M56 54 Q60 48 64 54" stroke="#00D2FF" stroke-width="3.5" stroke-linecap="round" fill="none" />
+  </g>
+
+  <!-- Typography: ReplyXAi -->
+  <text x="88" y="52" font-family="Inter, -apple-system, sans-serif" font-size="38" font-weight="800" fill="#0B192C" letter-spacing="-1">Reply</text>
+  <text x="195" y="52" font-family="Inter, -apple-system, sans-serif" font-size="40" font-weight="900" fill="url(#replyx-brand-grad)" letter-spacing="-0.5">X</text>
+  <text x="226" y="52" font-family="Inter, -apple-system, sans-serif" font-size="40" font-weight="800" fill="url(#replyx-brand-grad)" letter-spacing="-0.5">Ai</text>
+</svg>

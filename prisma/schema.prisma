@@ -1,0 +1,481 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x", "linux-musl", "linux-musl-openssl-3.0.x", "rhel-openssl-1.0.x", "rhel-openssl-1.1.x", "rhel-openssl-3.0.x"]
+}
+
+model User {
+  id            String        @id @default(uuid())
+  fullName      String
+  businessName  String
+  facebookPageUrl String?
+  email         String        @unique
+  passwordHash  String
+  phone         String?
+  avatarUrl     String?
+  role                    String        @default("USER") // USER, ADMIN
+  status                  String        @default("ACTIVE") // ACTIVE, DISABLED
+  plan                    String        @default("STARTER") // FREE, STARTER, BUSINESS, PRO
+  planStatus              String        @default("INACTIVE") // INACTIVE, PENDING_APPROVAL, ACTIVE, EXPIRED
+  monthlyMessageLimit     Int           @default(500)
+  messagesSentThisMonth   Int           @default(0)
+  planExpiresAt           DateTime?
+  activePackageId         String?
+  aiChatEnabled           Boolean       @default(true) // Admin toggle to enable/disable AI auto chat for this user
+  isBlocked               Boolean       @default(false) // Admin IP/User blocking
+  registrationIp          String?       // Client IP during account registration
+  lastLoginIp             String?       // Client IP during last login
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+
+  activePackage Package?        @relation(fields: [activePackageId], references: [id], onDelete: SetNull)
+  packageOrders PackageOrder[]
+  pages         Page[]
+  products      Product[]
+  conversations Conversation[]
+  messages      Message[]
+  orders        Order[]
+  aiSettings    AiSetting[]
+  activityLogs  ActivityLog[]
+  licenseKeys   LicenseKey[]
+  followUpSteps FollowUpScheduleStep[]
+  followUpLogs  FollowUpLog[]
+  courierSetting CourierSetting?
+
+  @@index([email])
+  @@index([role])
+  @@index([planStatus])
+  @@index([aiChatEnabled])
+  @@index([isBlocked])
+  @@index([registrationIp])
+  @@index([lastLoginIp])
+}
+
+model IpBlockList {
+  id              String        @id @default(uuid())
+  ipAddress       String        @unique
+  reason          String?
+  blockedBy       String?       // Admin email or system note
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([ipAddress])
+}
+
+model Page {
+  id                        String        @id @default(uuid())
+  userId                    String
+  channel                   String        @default("FACEBOOK") // FACEBOOK, WHATSAPP, INSTAGRAM, X, TELEGRAM
+  channelIdentifier         String?
+  extraConfig               String?
+  facebookPageId            String
+  pageName                  String
+  pageUsername              String?
+  pageProfileImage          String?
+  pageAccessTokenEncrypted   String
+  verifyTokenEncrypted      String
+  webhookUrl                String?
+  webhookStatus             String        @default("PENDING") // ACTIVE, PENDING, ERROR
+  connectionStatus          String        @default("CONNECTED") // CONNECTED, DISCONNECTED, TOKEN_EXPIRED, PENDING
+  autoReplyEnabled          Boolean       @default(true)
+  humanHandoffEnabled       Boolean       @default(true)
+  replyLanguage             String        @default("AUTO") // AUTO, BANGLA, ENGLISH, BANGLISH
+  replyStyle                String        @default("FRIENDLY") // PROFESSIONAL, FRIENDLY, SALES_FOCUSED, SHORT, CASUAL
+  replyDelaySeconds         Int           @default(3) // 0 for instant, 2-30 for natural human pacing
+  aiInstructions            String?
+  productImageReply         Boolean       @default(true)
+  maxImagesPerConversation  Int           @default(2) // 0 for unlimited, or 1, 2, 3, etc.
+  maxImagesPerReply         Int           @default(1) // 1, 2, 3, 5, etc. How many images to send in a single reply
+  orderDetection            Boolean       @default(true)
+  voiceProcessing           Boolean       @default(true)
+  imageUnderstanding        Boolean       @default(true)
+  followUpEnabled           Boolean       @default(false)
+  followUpWaitMinutes       Int           @default(30) // Minutes to wait after seen/last message (e.g. 1, 5, 15, 30, 60)
+  followUpMessage           String?       // Custom follow-up message template
+  followUpOnlySeen          Boolean       @default(true) // Only send if customer seen/read the message
+  followUpMaxCount          Int           @default(5) // How many times total: 1, 2, 3, 5, or 99
+  followUpFrequency         String        @default("CUSTOM_INTERVAL") // "ONCE", "DAILY", "CUSTOM_INTERVAL"
+  followUpIntervalHours     Int           @default(24) // If DAILY or CUSTOM_INTERVAL: gap in hours between subsequent follow-ups
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
+
+  user                      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products                  Product[]
+  conversations             Conversation[]
+  messages                  Message[]
+  orders                    Order[]
+  activityLogs              ActivityLog[]
+  followUpSteps             FollowUpScheduleStep[]
+  followUpLogs              FollowUpLog[]
+
+  @@unique([userId, facebookPageId])
+  @@index([userId])
+  @@index([facebookPageId])
+  @@index([channel])
+}
+
+model Product {
+  id                    String        @id @default(uuid())
+  userId                String
+  pageId                String?
+  name                  String
+  description           String?
+  sku                   String?
+  category              String?
+  price                 Float
+  discountPrice         Float?
+  stockQuantity         Int           @default(0)
+  stockStatus           String        @default("IN_STOCK") // IN_STOCK, OUT_OF_STOCK, PRE_ORDER
+  imageUrl              String?
+  images                String?       // JSON array of multiple image URLs / base64 strings
+  deliveryInfo          String?
+  productAiInstructions String?
+  isActive              Boolean       @default(true)
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page                  Page?         @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([pageId])
+  @@index([name])
+}
+
+model Conversation {
+  id            String        @id @default(uuid())
+  userId        String
+  pageId        String
+  channel       String        @default("FACEBOOK") // FACEBOOK, WHATSAPP, INSTAGRAM, X, TELEGRAM
+  senderPsid    String
+  customerName  String?
+  lastMessage   String?
+  lastMessageAt DateTime      @default(now())
+  status        String        @default("ACTIVE") // ACTIVE, HUMAN_MODE, RESOLVED
+  aiEnabled     Boolean       @default(true)
+  unreadCount   Int           @default(0)
+  lastSeenAt    DateTime?     // When the customer seen / read the last reply
+  lastFollowUpSentAt DateTime? // When the automated follow-up was dispatched
+  followUpSentCount  Int           @default(0) // How many automated follow-up messages have been dispatched
+  followUpStatus     String        @default("IDLE") // IDLE, IN_PROGRESS, COMPLETED, CUSTOMER_REPLIED, ORDER_PLACED, PAUSED
+  currentFollowUpStep Int          @default(0) // 0, 1, 2, 3, 4, 5
+  nextFollowUpDueAt  DateTime?     // Specific scheduled target timestamp
+  imagesSentCount    Int           @default(0) // How many product images have been sent in this conversation
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page          Page          @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  messages      Message[]
+  orders        Order[]
+  followUpLogs  FollowUpLog[]
+
+  @@unique([pageId, senderPsid])
+  @@index([userId])
+  @@index([pageId])
+  @@index([channel])
+  @@index([senderPsid])
+  @@index([lastMessageAt])
+  @@index([followUpStatus])
+  @@index([nextFollowUpDueAt])
+}
+
+model Message {
+  id              String        @id @default(uuid())
+  conversationId  String
+  userId          String
+  pageId          String
+  senderPsid      String
+  direction       String        // INCOMING, OUTGOING
+  messageType     String        @default("TEXT") // TEXT, IMAGE, AUDIO, VIDEO, ATTACHMENT, UNKNOWN
+  messageText     String?
+  mediaUrl        String?
+  transcription   String?
+  aiGenerated     Boolean       @default(false)
+  aiModel         String?
+  createdAt       DateTime      @default(now())
+
+  conversation    Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page            Page          @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([userId])
+  @@index([pageId])
+  @@index([createdAt])
+}
+
+model Order {
+  id              String        @id @default(uuid())
+  userId          String
+  pageId          String
+  conversationId  String?
+  customerName    String
+  phone           String
+  address         String
+  product         String
+  productId       String?
+  quantity        Int           @default(1)
+  price           Float         @default(0)
+  totalPrice      Float         @default(0)
+  notes           String?
+  status          String        @default("PENDING") // PENDING, CONFIRMED, PROCESSING, DELIVERED, CANCELLED
+  source          String        @default("MESSENGER_AI") // MESSENGER_AI, MANUAL
+  courierName           String?       // STEADFAST, PATHAO, REDX
+  courierConsignmentId  String?
+  courierTrackingCode   String?
+  courierStatus         String?       // in_review, pending, delivered, cancelled, etc.
+  courierSentAt         DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page            Page          @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([pageId])
+  @@index([status])
+  @@index([phone])
+  @@index([courierTrackingCode])
+  @@index([createdAt])
+}
+
+model AiSetting {
+  id              String        @id @default(uuid())
+  userId          String
+  provider        String        @default("GEMINI") // GEMINI, OPENAI
+  model           String        @default("gemini-1.5-flash")
+  encryptedApiKey String?
+  temperature     Float         @default(0.7)
+  maxTokens       Int           @default(800)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@index([userId])
+}
+
+model ActivityLog {
+  id          String        @id @default(uuid())
+  userId      String
+  pageId      String?
+  action      String
+  description String
+  metadata    String?
+  createdAt   DateTime      @default(now())
+
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page        Page?         @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([pageId])
+  @@index([createdAt])
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Package {
+  id              String         @id @default(uuid())
+  name            String
+  slug            String         @unique
+  description     String?
+  price           Float          @default(0)
+  durationDays    Int            @default(30)
+  messageLimit    Int            @default(1000)
+  pageLimit       Int            @default(1)
+  productLimit    Int            @default(50)
+  features        String         @default("[]")
+  isPopular       Boolean        @default(false)
+  isActive        Boolean        @default(true)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  orders          PackageOrder[]
+  users           User[]
+  licenseKeys     LicenseKey[]
+
+  @@index([slug])
+  @@index([isActive])
+}
+
+model PaymentMethod {
+  id              String         @id @default(uuid())
+  name            String         @unique // BKASH, NAGAD, ROCKET, UPAY
+  displayName     String         // বিকাশ, নগদ, রকেট, উপায়
+  accountType     String         @default("PERSONAL") // PERSONAL, MERCHANT, AGENT
+  accountNumber   String         // 01XXXXXXXXX
+  instructions    String?
+  qrCodeUrl       String?
+  isActive        Boolean        @default(true)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  orders          PackageOrder[]
+
+  @@index([name])
+  @@index([isActive])
+}
+
+model PackageOrder {
+  id                String         @id @default(uuid())
+  orderNumber       String         @unique
+  userId            String
+  packageId         String
+  paymentMethodId   String?
+  paymentMethodName String
+  amount            Float
+  senderNumber      String
+  transactionId     String
+  status            String         @default("PENDING") // PENDING, APPROVED, REJECTED
+  adminNote         String?
+  paymentProofUrl   String?
+  approvedAt        DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package           Package        @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  paymentMethod     PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([transactionId])
+  @@index([orderNumber])
+}
+
+model LicenseKey {
+  id              String         @id @default(uuid())
+  key             String         @unique // RPLX-BIZ-8942-1204
+  plan            String         @default("STARTER") // STARTER, BUSINESS, PRO
+  packageId       String?
+  durationDays    Int            @default(30)
+  messageLimit    Int            @default(1000)
+  pageLimit       Int            @default(1)
+  productLimit    Int            @default(50)
+  clientName      String?
+  clientPhone     String?
+  clientNote      String?
+  status          String         @default("ACTIVE") // ACTIVE, USED, EXPIRED, REVOKED
+  usedByUserId    String?
+  usedAt          DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  package         Package?       @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  usedByUser      User?          @relation(fields: [usedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([key])
+  @@index([status])
+  @@index([usedByUserId])
+}
+
+model FollowUpScheduleStep {
+  id              String         @id @default(uuid())
+  userId          String?
+  pageId          String?
+  stepNumber      Int            @default(1) // 1, 2, 3, 4, 5
+  dayOffset       Int            @default(1) // 1, 3, 7, 15, 25
+  timeOfDay       String         @default("10:00") // 24-hr format "10:00", "16:00", "20:00"
+  title           String         // e.g. "১ম ফলো-আপ (১ দিন পর)"
+  guidelinePrompt String?        // Custom AI guidance for this step
+  isEnabled       Boolean        @default(true)
+  isGlobalDefault Boolean        @default(false)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  user            User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page            Page?          @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([pageId])
+  @@index([isGlobalDefault])
+  @@index([stepNumber])
+}
+
+model FollowUpLog {
+  id                  String       @id @default(uuid())
+  userId              String
+  pageId              String
+  conversationId      String
+  stepNumber          Int          @default(1)
+  dayOffset           Int          @default(1)
+  scheduledTime       String?
+  messageText         String
+  channel             String       @default("FACEBOOK")
+  customerName        String?
+  senderPsid          String
+  status              String       @default("SENT") // SENT, FAILED, CUSTOMER_REPLIED, CONVERTED
+  aiModel             String?
+  responseReceivedAt  DateTime?
+  createdAt           DateTime     @default(now())
+
+  user                User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page                Page         @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  conversation        Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([pageId])
+  @@index([conversationId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model CourierSetting {
+  id                          String    @id @default(uuid())
+  userId                      String    @unique
+  provider                    String    @default("STEADFAST") // Default courier: STEADFAST, PATHAO
+
+  // Steadfast
+  steadfastApiKeyEncrypted    String?
+  steadfastSecretKeyEncrypted String?
+  steadfastActive             Boolean   @default(true)
+
+  // Pathao
+  pathaoClientIdEncrypted     String?
+  pathaoClientSecretEncrypted String?
+  pathaoUsernameEncrypted     String?   // Pathao merchant email
+  pathaoPasswordEncrypted     String?   // Pathao password
+  pathaoStoreId               String?   // Default Pathao store/warehouse ID
+  pathaoTokenEncrypted        String?   // Cached access token
+  pathaoTokenExpiresAt        DateTime?
+  pathaoActive                Boolean   @default(false)
+
+  // Backward compatibility fields
+  apiKeyEncrypted             String?
+  secretKeyEncrypted          String?
+  isActive                    Boolean   @default(true)
+
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+
+  user                        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([token])
+}
+
