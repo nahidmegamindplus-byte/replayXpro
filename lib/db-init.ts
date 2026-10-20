@@ -9,6 +9,9 @@ const globalDb = globalThis as unknown as {
 };
 
 export async function healDatabase() {
+  const isPostgres = process.env.DATABASE_URL?.startsWith('postgres') || process.env.DIRECT_URL?.startsWith('postgres');
+  if (isPostgres) return; // PostgreSQL & Supabase handle vacuum and storage automatically
+
   if (globalDb.__isHealing) return;
   globalDb.__isHealing = true;
   console.log('[DB Health] Running automatic SQLite self-healing & maintenance...');
@@ -33,6 +36,13 @@ export async function healDatabase() {
 export async function ensureDatabaseReady() {
   if (globalDb.__isDbInitialized) return;
   if (globalDb.__initPromise) return globalDb.__initPromise;
+
+  const isPostgres = process.env.DATABASE_URL?.startsWith('postgres') || process.env.DIRECT_URL?.startsWith('postgres');
+  if (isPostgres) {
+    globalDb.__isDbInitialized = true;
+    startFollowUpWorker();
+    return;
+  }
 
   globalDb.__initPromise = (async () => {
     try {

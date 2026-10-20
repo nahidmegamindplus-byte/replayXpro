@@ -1,73 +1,86 @@
 import { PrismaClient } from '@prisma/client';
 import fs from 'fs';
 import path from 'path';
-
 import os from 'os';
 
+// Force load .env from disk if process.env.DATABASE_URL is not set or starts with file:
+function loadEnvFromDisk(): void {
+  const candidates = [
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(process.cwd(), '.env.local'),
+    path.resolve(__dirname, '..', '.env'),
+    path.resolve(__dirname, '.env'),
+  ];
+  for (const envPath of candidates) {
+    if (fs.existsSync(envPath)) {
+      try {
+        const content = fs.readFileSync(envPath, 'utf8');
+        content.split(/\r?\n/).forEach((line) => {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith('#')) {
+            const eqIdx = trimmed.indexOf('=');
+            if (eqIdx !== -1) {
+              const key = trimmed.slice(0, eqIdx).trim();
+              let val = trimmed.slice(eqIdx + 1).trim();
+              if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+                val = val.slice(1, -1);
+              }
+              // If DATABASE_URL or DIRECT_URL in process.env is missing or starts with file:, override with .env value
+              if (key === 'DATABASE_URL' || key === 'DIRECT_URL') {
+                if (!process.env[key] || process.env[key]?.startsWith('file:')) {
+                  process.env[key] = val;
+                }
+              } else if (process.env[key] === undefined) {
+                process.env[key] = val;
+              }
+            }
+          }
+        });
+      } catch (_) {}
+    }
+  }
+}
+
+// Ensure env is loaded from disk immediately
+loadEnvFromDisk();
+
 function getDatabaseUrl(): string {
+  loadEnvFromDisk();
   const envUrl = process.env.DATABASE_URL;
 
-  // If a remote database URL is configured (PostgreSQL, MySQL, Turso/LibSQL, etc.), use it directly
+  // 1. If a PostgreSQL URL is configured, use it directly
+  if (envUrl && (envUrl.startsWith('postgresql://') || envUrl.startsWith('postgres://'))) {
+    return envUrl;
+  }
+
+  // 2. Check DIRECT_URL fallback for Supabase/PostgreSQL
+  const directUrl = process.env.DIRECT_URL;
+  if (directUrl && (directUrl.startsWith('postgresql://') || directUrl.startsWith('postgres://'))) {
+    return directUrl;
+  }
+
+  // 3. If another remote database URL (e.g. mysql, libsql)
   if (envUrl && !envUrl.startsWith('file:') && !envUrl.startsWith('./') && !envUrl.includes('dev.db')) {
     return envUrl;
   }
 
-  // Detect genuine serverless environment (Vercel, Netlify, AWS Lambda)
-  // NEVER treat standard servers (Windows/Linux/Docker/PM2) as serverless simply due to NODE_ENV === 'production'
-  const isServerless =
-    Boolean(process.env.VERCEL) ||
-    Boolean(process.env.NETLIFY) ||
-    Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
-    Boolean(process.env.LAMBDA_TASK_ROOT);
-
-  if (isServerless) {
-    try {
-      const tmpDir = os.tmpdir() || '/tmp';
-      const tmpDbPath = path.join(tmpDir, 'replyx_dev.db');
-
-      if (!fs.existsSync(tmpDbPath)) {
-        // Look for source seed db in package bundle
-        const sourcePaths = [
-          path.resolve(process.cwd(), 'prisma', 'dev.db'),
-          path.resolve(process.cwd(), 'dev.db'),
-          path.join(__dirname, '..', '..', 'prisma', 'dev.db'),
-          path.join(__dirname, '..', 'prisma', 'dev.db'),
-        ];
-
-        let copied = false;
-        for (const src of sourcePaths) {
-          if (fs.existsSync(src)) {
-            try {
-              fs.copyFileSync(src, tmpDbPath);
-              fs.chmodSync(tmpDbPath, 0o666);
-              copied = true;
-              break;
-            } catch (err) {
-              console.warn('Failed to copy seed db to serverless temp directory:', err);
-            }
-          }
-        }
-
-        if (!copied) {
-          // Create empty file in temp so SQLite can open and write schema
-          fs.writeFileSync(tmpDbPath, '');
-          fs.chmodSync(tmpDbPath, 0o666);
-        }
+  // 4. Check if schema.prisma expects postgresql
+  try {
+    const schemaPath = path.resolve(process.cwd(), 'prisma', 'schema.prisma');
+    if (fs.existsSync(schemaPath)) {
+      const schema = fs.readFileSync(schemaPath, 'utf8');
+      if (schema.includes('provider = "postgresql"') || schema.includes('provider  = "postgresql"')) {
+        // Must never return file: for postgresql schema
+        return envUrl || '';
       }
-
-      return `file:${tmpDbPath}?connection_limit=1&busy_timeout=30000`;
-    } catch (e) {
-      console.warn('Serverless temp db setup fallback:', e);
     }
-  }
+  } catch (_) {}
 
-  // Local / standard server environment (Windows, Linux VPS, Hostinger, Docker)
+  // 5. Fallback for SQLite only if explicitly using SQLite schema
   function findProjectRoot(): string {
-    // 1. Check process.cwd()
     if (fs.existsSync(path.join(process.cwd(), 'prisma'))) {
       return process.cwd();
     }
-    // 2. Check __dirname and parent hierarchy
     let currentDir = __dirname;
     for (let i = 0; i < 5; i++) {
       if (fs.existsSync(path.join(currentDir, 'prisma'))) {
@@ -82,44 +95,32 @@ function getDatabaseUrl(): string {
 
   const rootDir = findProjectRoot();
   const localPrismaDir = path.resolve(rootDir, 'prisma');
-  if (!fs.existsSync(localPrismaDir)) {
-    try {
-      fs.mkdirSync(localPrismaDir, { recursive: true, mode: 0o777 });
-    } catch (e) {}
-  }
   const localDb = path.resolve(localPrismaDir, 'dev.db');
-  if (fs.existsSync(localDb)) {
-    try {
-      fs.chmodSync(localDb, 0o666);
-    } catch (_) {}
-  }
   return `file:${localDb}?connection_limit=1&busy_timeout=30000`;
 }
 
 const dbUrl = getDatabaseUrl();
-process.env.DATABASE_URL = dbUrl;
+if (dbUrl && !dbUrl.startsWith('file:')) {
+  process.env.DATABASE_URL = dbUrl;
+}
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
-    datasources: {
-      db: {
-        url: dbUrl,
-      },
-    },
+    ...(dbUrl && (dbUrl.startsWith('postgresql://') || dbUrl.startsWith('postgres://'))
+      ? { datasources: { db: { url: dbUrl } } }
+      : {}),
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
   });
 
-// Always retain PrismaClient singleton on globalThis across all environments (including production)
-// to prevent multiple PrismaClient instances opening competing SQLite file descriptors/locks
+// Retain PrismaClient singleton on globalThis
 if (!globalForPrisma.prisma) {
   globalForPrisma.prisma = prisma;
 }
 
 // Global server process crash protection
-// Prevents unhandled background async errors or webhook socket drops from terminating the server process
 if (typeof process !== 'undefined') {
   if (!(globalThis as any).__replyx_guards_installed) {
     (globalThis as any).__replyx_guards_installed = true;

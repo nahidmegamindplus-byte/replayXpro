@@ -45,7 +45,11 @@ if (fs.existsSync(envPath)) {
           if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
             val = val.slice(1, -1);
           }
-          if (process.env[key] === undefined) {
+          if (key === 'DATABASE_URL' || key === 'DIRECT_URL') {
+            if (!process.env[key] || process.env[key]?.startsWith('file:')) {
+              process.env[key] = val;
+            }
+          } else if (process.env[key] === undefined) {
             process.env[key] = val;
           }
         }
@@ -61,7 +65,12 @@ if (!process.env.NODE_ENV) {
 
 const prismaDbPath = path.resolve(__dirname, 'prisma', 'dev.db');
 if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = `file:${prismaDbPath}`;
+  try {
+    const schemaContent = fs.readFileSync(path.resolve(__dirname, 'prisma', 'schema.prisma'), 'utf8');
+    if (schemaContent.includes('provider = "sqlite"') || schemaContent.includes('provider  = "sqlite"')) {
+      process.env.DATABASE_URL = `file:${prismaDbPath}`;
+    }
+  } catch (_) {}
 }
 if (!process.env.JWT_SECRET) {
   process.env.JWT_SECRET = 'replyx_ai_super_secret_jwt_key_2026_bd_secure';
