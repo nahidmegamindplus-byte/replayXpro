@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
     return auth.response;
   }
 
-  const impersonatorToken = req.cookies.get(ADMIN_IMPERSONATOR_COOKIE)?.value;
+  const impersonatorToken = req?.cookies?.get ? req.cookies.get(ADMIN_IMPERSONATOR_COOKIE)?.value : undefined;
   let isImpersonated = false;
   let impersonatorEmail: string | undefined;
 

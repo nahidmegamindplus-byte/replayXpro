@@ -38,18 +38,8 @@ export async function POST(req: NextRequest) {
         targetPageId = firstPage.id;
       } else {
         const anyPage = await prisma.page.findFirst();
-        if (anyPage) targetPageId = anyPage.id;
+        targetPageId = anyPage ? anyPage.id : 'sandbox';
       }
-    }
-
-    if (!targetPageId) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'কোনো পেজ বা চ্যানেল সংযুক্ত করা হয়নি। অনুগ্রহ করে প্রথমে "পেজ ও চ্যানেল" সেকশন থেকে আপনার পেজ যুক্ত করুন।',
-        },
-        { status: 400 }
-      );
     }
 
     const aiResult = await generateAIReply({

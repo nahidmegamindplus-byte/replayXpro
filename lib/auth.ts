@@ -86,17 +86,34 @@ export function verifyToken(token: string): TokenPayload | null {
  * Extract token from HTTP Request (Cookie or Authorization header)
  */
 export function extractToken(req: NextRequest): string | null {
-  // 1. Check HttpOnly Cookie
-  const cookie = req.cookies.get(AUTH_COOKIE_NAME);
-  if (cookie?.value) {
-    return cookie.value;
-  }
+  try {
+    // 1. Check NextRequest cookies
+    if (req?.cookies && typeof req.cookies.get === 'function') {
+      const cookie = req.cookies.get(AUTH_COOKIE_NAME);
+      if (cookie?.value) {
+        return cookie.value;
+      }
+    }
+  } catch (_) {}
+
+  // 1b. Check raw cookie header if cookies.get is not present
+  try {
+    const rawCookie = req?.headers?.get ? req.headers.get('cookie') : (req?.headers as any)?.cookie;
+    if (rawCookie) {
+      const match = rawCookie.match(new RegExp(`(?:^|;\\s*)${AUTH_COOKIE_NAME}=([^;]*)`));
+      if (match && match[1]) {
+        return decodeURIComponent(match[1]);
+      }
+    }
+  } catch (_) {}
 
   // 2. Check Authorization Bearer header
-  const authHeader = req.headers.get('authorization');
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    return authHeader.substring(7);
-  }
+  try {
+    const authHeader = req?.headers?.get ? req.headers.get('authorization') : (req?.headers as any)?.authorization;
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      return authHeader.substring(7);
+    }
+  } catch (_) {}
 
   return null;
 }

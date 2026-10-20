@@ -74,7 +74,10 @@ export async function POST(req: NextRequest) {
         role: 'USER',
         status: 'ACTIVE',
         plan: 'STARTER',
-        planStatus: 'INACTIVE',
+        planStatus: 'ACTIVE',
+        planExpiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 days free trial
+        monthlyMessageLimit: 500,
+        messagesSentThisMonth: 0,
         aiChatEnabled: true,
         isBlocked: false,
         registrationIp: clientIp,
