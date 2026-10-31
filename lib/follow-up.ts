@@ -692,8 +692,167 @@ export function startFollowUpWorker(intervalMs = 60000) {
     }
   }, intervalMs);
 
-  if (globalForFollowUp.followUpWorkerInterval && typeof globalForFollowUp.followUpWorkerInterval.unref === 'function') {
+    if (globalForFollowUp.followUpWorkerInterval && typeof globalForFollowUp.followUpWorkerInterval.unref === 'function') {
     globalForFollowUp.followUpWorkerInterval.unref();
+  }
+}
+
+/**
+ * Dispatch an on-demand/instant follow-up message to a specific customer conversation immediately
+ * Allows the user/merchant to trigger follow-up at any arbitrary time.
+ */
+export async function sendInstantFollowUpToConversation(
+  conversationId: string,
+  userId: string,
+  customMessage?: string
+): Promise<{ success: boolean; messageText?: string; error?: string }> {
+  try {
+    const conv = await prisma.conversation.findFirst({
+      where: { id: conversationId, userId },
+      include: {
+        page: true,
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 8,
+        },
+        followUpLogs: {
+          orderBy: { createdAt: 'asc' },
+          take: 10,
+        },
+      },
+    });
+
+    if (!conv) {
+      return { success: false, error: 'কথোপকথন খুঁজে পাওয়া যায়নি।' };
+    }
+
+    const page = conv.page;
+    if (!page) {
+      return { success: false, error: 'সংযুক্ত পেজ পাওয়া যায়নি।' };
+    }
+
+    const pageAccessToken = decrypt(page.pageAccessTokenEncrypted);
+    if (!pageAccessToken) {
+      return { success: false, error: 'Page Access Token পাওয়া যায়নি।' };
+    }
+
+    let extraConfig = {};
+    if (page.extraConfig) {
+      try {
+        extraConfig = JSON.parse(page.extraConfig);
+      } catch (_) {}
+    }
+
+    // Determine target step
+    const scheduleSteps = await getActiveScheduleSteps(userId, page.id);
+    const targetStep = scheduleSteps[conv.currentFollowUpStep] || scheduleSteps[0] || DEFAULT_SCHEDULE_STEPS[0];
+
+    let messageText = (customMessage && customMessage.trim()) || '';
+    let aiModel = 'MANUAL_CUSTOM';
+
+    if (!messageText) {
+      if (page.followUpMessage && page.followUpMessage.trim()) {
+        messageText = page.followUpMessage.replace(/{customer_name}/g, conv.customerName || 'সম্মানিত গ্রাহক');
+        aiModel = 'PAGE_TEMPLATE';
+      } else {
+        const historyFormatted = conv.messages.map((m) => ({
+          direction: m.direction,
+          text: m.messageText || '',
+        }));
+
+        const previousFollowUps = conv.followUpLogs.map((l) => l.messageText);
+
+        const aiFollowUp = await generateAiFollowUpMessage({
+          conversationId: conv.id,
+          customerName: conv.customerName,
+          step: targetStep,
+          conversationHistory: historyFormatted,
+          previousFollowUps,
+          pageName: page.pageName,
+          replyLanguage: page.replyLanguage || 'বাংলা',
+          businessInstructions: page.aiInstructions || '',
+        });
+
+        messageText = aiFollowUp.text;
+        aiModel = aiFollowUp.model;
+      }
+    }
+
+    const channel = (conv.channel || page.channel || 'FACEBOOK') as SocialChannel;
+    const sendResult = await sendChannelMessage({
+      channel,
+      recipientId: conv.senderPsid,
+      text: messageText,
+      accessToken: pageAccessToken,
+      channelIdentifier: page.channelIdentifier || page.facebookPageId,
+      extraConfig,
+    });
+
+    if (!sendResult.success) {
+      serverLogger.warn(`Instant follow-up dispatch failed for ${conv.senderPsid}: ${sendResult.error}`);
+      return { success: false, error: sendResult.error || 'মেসেজ পাঠানো ব্যর্থ হয়েছে।' };
+    }
+
+    // Save outgoing message
+    await prisma.message.create({
+      data: {
+        conversationId: conv.id,
+        userId,
+        pageId: page.id,
+        senderPsid: conv.senderPsid,
+        direction: 'OUTGOING',
+        messageType: 'TEXT',
+        messageText,
+        aiGenerated: true,
+        aiModel: `INSTANT_FOLLOW_UP:${aiModel}`,
+      },
+    });
+
+    // Save log
+    await prisma.followUpLog.create({
+      data: {
+        userId,
+        pageId: page.id,
+        conversationId: conv.id,
+        stepNumber: targetStep.stepNumber || 1,
+        dayOffset: targetStep.dayOffset || 1,
+        scheduledTime: targetStep.timeOfDay || 'INSTANT',
+        messageText,
+        channel,
+        customerName: conv.customerName,
+        senderPsid: conv.senderPsid,
+        status: 'SENT',
+        aiModel,
+      },
+    });
+
+    // Update conversation
+    await prisma.conversation.update({
+      where: { id: conv.id },
+      data: {
+        lastMessage: messageText,
+        lastMessageAt: new Date(),
+        lastFollowUpSentAt: new Date(),
+        followUpSentCount: { increment: 1 },
+        currentFollowUpStep: conv.currentFollowUpStep + 1,
+        followUpStatus: 'IN_PROGRESS',
+      },
+    });
+
+    // Record AI quota usage
+    await recordAiMessageSent(userId);
+
+    await logActivity({
+      userId,
+      pageId: page.id,
+      action: 'INSTANT_FOLLOW_UP_SENT',
+      description: `গ্রাহক ${conv.customerName || conv.senderPsid}-কে তাত্ক্ষণিক ফলো-আপ পাঠানো হয়েছে: "${messageText.slice(0, 50)}..."`,
+    });
+
+    return { success: true, messageText };
+  } catch (err: any) {
+    serverLogger.error('Error sending instant follow-up to conversation:', err);
+    return { success: false, error: err?.message || 'সার্ভার ত্রুটি' };
   }
 }
 

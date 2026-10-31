@@ -557,20 +557,32 @@ function generateSmartEcommerceFallback(params: {
 
   if (phoneMatch) {
     const phone = phoneMatch[0];
-    const orderedProduct = matchedProduct || (params.products.length > 0 ? buildMatchedProduct(params.products[0]) : null);
-    detectedOrder = {
-      customerName: 'সম্মানিত গ্রাহক',
-      phone: phone,
-      address: hasAddressWords ? params.incomingText : 'ঠিকানা যাচাই করা হচ্ছে',
-      product: orderedProduct ? orderedProduct.name : 'অর্ডারকৃত পণ্য',
-      productId: orderedProduct ? orderedProduct.id : undefined,
-      quantity: 1,
-      price: orderedProduct ? orderedProduct.price : 0,
-      totalPrice: (orderedProduct ? orderedProduct.price : 0) + 70,
-    };
+    const hasOrderIntent = /(অর্ডার|order|কনফার্ম|confirm|পাঠান|পাঠিয়ে দেন|ডেলিভারি|ক্যাশ অন|নিতে চাই|কিনব|কিনবো|বুক)/i.test(query);
 
-    replyText = `ধন্যবাদ! আপনার অর্ডারটি সফলভাবে গ্রহণ করা হয়েছে।\n\n📦 পণ্যের নাম: ${detectedOrder.product}\n📞 মোবাইল: ${detectedOrder.phone}\n📍 ডেলিভারি ঠিকানা: ${detectedOrder.address}\n💰 মোট মূল্য: ৳${detectedOrder.totalPrice} (ডেলিভারি চার্জ সহ)\n\nআমাদের প্রতিনিধি দ্রুত আপনাকে ফোন করে অর্ডারটি কনফার্ম করবেন।`;
-    return { replyText, detectedOrder, matchedProduct };
+    // Only create an order if a concrete product was matched AND there is address or explicit order intent
+    if (matchedProduct && (hasAddressWords || hasOrderIntent)) {
+      detectedOrder = {
+        customerName: 'সম্মানিত গ্রাহক',
+        phone: phone,
+        address: hasAddressWords ? params.incomingText : 'ঠিকানা নেওয়া বাকি',
+        product: matchedProduct.name,
+        productId: matchedProduct.id,
+        quantity: 1,
+        price: matchedProduct.price,
+        totalPrice: matchedProduct.price + 70,
+      };
+
+      replyText = `ধন্যবাদ! আপনার "${detectedOrder.product}" পণ্যটির অর্ডার তথ্য সফলভাবে গ্রহণ করা হয়েছে।\n\n📦 পণ্যের নাম: ${detectedOrder.product}\n📞 মোবাইল: ${detectedOrder.phone}\n📍 ডেলিভারি ঠিকানা: ${detectedOrder.address}\n💰 মোট মূল্য: ৳${detectedOrder.totalPrice} (ডেলিভারি চার্জ সহ)\n\nআমাদের প্রতিনিধি দ্রুত আপনার সাথে যোগাযোগ করে ডেলিভারি কনফার্ম করবেন।`;
+      return { replyText, detectedOrder, matchedProduct };
+    } else if (matchedProduct) {
+      // Product was matched and phone provided, but no delivery address or order intent yet
+      replyText = `ধন্যবাদ! আপনার মোবাইল নম্বরটি (${phone}) পেয়েছি। "${matchedProduct.name}" পণ্যটি অর্ডার করতে অনুগ্রহ করে আপনার সম্পূর্ণ ডেলিভারি ঠিকানা লিখে পাঠিয়ে দিন! 🚚`;
+      return { replyText, detectedOrder: null, matchedProduct };
+    } else {
+      // Customer only provided a phone number without selecting a product -> DO NOT pick products[0]!
+      replyText = `ধন্যবাদ! আপনার মোবাইল নম্বরটি (${phone}) পেয়েছি। আপনি আমাদের কোন পণ্যটি অর্ডার করতে চান অথবা কীভাবে সহায়তা করতে পারি, অনুগ্রহ করে একটু লিখে জানাবেন কি? 😊`;
+      return { replyText, detectedOrder: null, matchedProduct: null };
+    }
   }
 
   // 2. Delivery inquiry
@@ -1317,6 +1329,19 @@ ORDER_JSON>>>
     });
   } catch (trackErr) {
     serverLogger.warn('Could not increment user subscription message count', trackErr);
+  }
+
+  // 8. Sanitize and validate detectedOrder to prevent phantom/incomplete orders
+  if (detectedOrder) {
+    const rawPhone = String(detectedOrder.phone || '').trim();
+    const hasValidPhone = /(?:01|\+8801)[3-9]\d{8}/.test(rawPhone);
+    const prodName = String(detectedOrder.product || '').trim();
+    const isGenericProduct = !prodName || prodName === 'N/A' || prodName === 'Unknown' || prodName === 'অর্ডারকৃত পণ্য';
+
+    if (!hasValidPhone || isGenericProduct) {
+      serverLogger.info('Discarded invalid or incomplete detected order:', { rawPhone, prodName });
+      detectedOrder = null;
+    }
   }
 
   return {

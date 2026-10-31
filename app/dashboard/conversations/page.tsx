@@ -157,7 +157,47 @@ export default function ConversationsPage() {
     fetchConversations();
   }, [search, statusFilter, channelFilter]);
 
-  // Periodic follow-up automation runner (runs safely every 2 minutes while on dashboard)
+  // 1. Background live message polling for open conversation (every 4.5 seconds)
+  useEffect(() => {
+    if (!selectedConv?.id) return;
+    let isCancelled = false;
+
+    const pollInterval = setInterval(async () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      try {
+        const data = await apiFetch<any>(`/api/conversations/${selectedConv.id}`, { retries: 1 });
+        if (!isCancelled && data?.success && Array.isArray(data.messages)) {
+          setMessages((prev: any[]) => {
+            if (data.messages.length > prev.length) {
+              setTimeout(() => scrollToBottom(true), 80);
+              return data.messages;
+            }
+            return prev;
+          });
+          if (data.conversation) {
+            setSelectedConv((prev: any) => (prev ? { ...prev, ...data.conversation } : data.conversation));
+          }
+        }
+      } catch (_) {}
+    }, 4500);
+
+    return () => {
+      isCancelled = true;
+      clearInterval(pollInterval);
+    };
+  }, [selectedConv?.id]);
+
+  // 2. Background conversation list auto-refresh (every 12 seconds)
+  useEffect(() => {
+    const listInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'hidden') {
+        fetchConversations(true);
+      }
+    }, 12000);
+    return () => clearInterval(listInterval);
+  }, [search, statusFilter, channelFilter]);
+
+  // 3. Periodic follow-up automation runner (runs safely every 2 minutes while on dashboard)
   useEffect(() => {
     const triggerFollowUp = async () => {
       try {
@@ -169,6 +209,35 @@ export default function ConversationsPage() {
     const interval = setInterval(triggerFollowUp, 2 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Instant Follow-up dispatch handler
+  const [sendingFollowUp, setSendingFollowUp] = useState(false);
+  const handleSendInstantFollowUp = async () => {
+    if (!selectedConv) return;
+    try {
+      setSendingFollowUp(true);
+      const res = await fetch('/api/follow-up', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'SEND_INSTANT_FOLLOW_UP',
+          conversationId: selectedConv.id,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        toast.success(data.message || 'গ্রাহকের নিকট ফলো-আপ পাঠানো হয়েছে!');
+        loadConversation(selectedConv.id, false);
+      } else {
+        toast.error(data.error || 'ফলো-আপ পাঠানো সম্ভব হয়নি।');
+      }
+    } catch (e) {
+      toast.error('সার্ভারে যোগাযোগ করা যায়নি।');
+    } finally {
+      setSendingFollowUp(false);
+    }
+  };
 
   const handleSendManualReply = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -608,6 +677,20 @@ export default function ConversationsPage() {
                   >
                     <ShoppingCart className="w-3.5 h-3.5" />
                     <span className="hidden sm:inline">অর্ডার তৈরি</span>
+                  </button>
+
+                  <button
+                    onClick={handleSendInstantFollowUp}
+                    disabled={sendingFollowUp}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 text-xs font-semibold transition-colors shadow-xs disabled:opacity-50"
+                    title="এই গ্রাহককে এখনই যেকোনো সময়ে সরাসরি এআই ফলো-আপ বার্তা পাঠান"
+                  >
+                    {sendingFollowUp ? (
+                      <div className="w-3.5 h-3.5 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <MessageSquareReply className="w-3.5 h-3.5 text-purple-600" />
+                    )}
+                    <span className="hidden sm:inline">ফলো-আপ পাঠান</span>
                   </button>
 
                   <button

@@ -272,7 +272,24 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        // 7. Save incoming message to database
+        // 7. Deduplication check against recent database records (within last 15s)
+        if (messageText) {
+          const recentDuplicate = await prisma.message.findFirst({
+            where: {
+              conversationId: conversation.id,
+              senderPsid,
+              direction: 'INCOMING',
+              messageText,
+              createdAt: { gte: new Date(Date.now() - 15000) },
+            },
+          });
+          if (recentDuplicate) {
+            serverLogger.info(`Duplicate message skipped for ${senderPsid}: "${messageText.slice(0, 30)}"`);
+            continue;
+          }
+        }
+
+        // Save incoming message to database
         const savedIncomingMessage = await prisma.message.create({
           data: {
             conversationId: conversation.id,
@@ -361,12 +378,12 @@ export async function POST(req: NextRequest) {
             } catch (trErr) {}
           }
 
-          // 10. Send reply via Facebook Messenger Send API with configured AI human-like delay
+          // 10. Send reply via Facebook Messenger Send API with safe human-like delay (capped to prevent Facebook webhook timeouts)
           if (pageAccessToken && aiResult.replyText) {
-            const delaySec = page.replyDelaySeconds ?? 3;
+            const delaySec = page.replyDelaySeconds ?? 2;
             if (delaySec > 0) {
               sendMessengerAction(senderPsid, 'typing_on', pageAccessToken).catch(() => {});
-              await new Promise((resolve) => setTimeout(resolve, Math.min(delaySec, 30) * 1000));
+              await new Promise((resolve) => setTimeout(resolve, Math.min(delaySec, 2) * 1000));
             }
 
             await sendMessengerText(senderPsid, aiResult.replyText, pageAccessToken);

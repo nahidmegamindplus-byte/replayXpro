@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import { ensureDatabaseReady } from '@/lib/db-init';
-import { DEFAULT_SCHEDULE_STEPS, runFollowUpAutomation, startFollowUpWorker } from '@/lib/follow-up';
+import { DEFAULT_SCHEDULE_STEPS, runFollowUpAutomation, startFollowUpWorker, sendInstantFollowUpToConversation } from '@/lib/follow-up';
 
 export async function GET(req: NextRequest) {
   try {
@@ -236,6 +236,25 @@ export async function POST(req: NextRequest) {
             ? `সফলভাবে ${summary.sentCount} টি ফলো-আপ বার্তা পাঠানো হয়েছে।`
             : `চেক সম্পন্ন: বর্তমান সময়ে কোনো নতুন ফলো-আপ বার্তা পাঠানোর প্রয়োজন নেই। নির্ধারিত সময় পার হলে স্বয়ংক্রিয়ভাবে পাঠানো হবে।`,
         summary,
+      });
+    }
+ 
+    // 2b. Dispatch Instant Follow-up to a specific conversation on-demand
+    if (action === 'SEND_INSTANT_FOLLOW_UP') {
+      const { conversationId, customMessage } = body;
+      if (!conversationId) {
+        return NextResponse.json({ success: false, error: 'Conversation ID is required.' }, { status: 400 });
+      }
+
+      const result = await sendInstantFollowUpToConversation(conversationId, userId, customMessage);
+      if (!result.success) {
+        return NextResponse.json({ success: false, error: result.error || 'ফলো-আপ পাঠানো সম্ভব হয়নি।' }, { status: 400 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: 'গ্রাহকের নিকট তাৎক্ষণিক ফলো-আপ বার্তা পাঠানো হয়েছে!',
+        messageText: result.messageText,
       });
     }
 

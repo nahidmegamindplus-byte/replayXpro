@@ -202,6 +202,34 @@ export default function FollowUpPage() {
     }
   };
 
+  // Instant Follow-up dispatch for a specific customer
+  const [sendingInstantId, setSendingInstantId] = useState<string | null>(null);
+  const handleInstantFollowUp = async (convId: string) => {
+    try {
+      setSendingInstantId(convId);
+      const res = await fetch('/api/follow-up', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'SEND_INSTANT_FOLLOW_UP',
+          conversationId: convId,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        toast.success(data.message || 'গ্রাহকের নিকট তাত্ক্ষণিক ফলো-আপ পাঠানো হয়েছে!');
+        fetchFollowUpData(selectedPageId || undefined);
+      } else {
+        toast.error(data.error || 'ফলো-আপ পাঠানো সম্ভব হয়নি।');
+      }
+    } catch (e) {
+      toast.error('সার্ভারে যোগাযোগ করা যায়নি।');
+    } finally {
+      setSendingInstantId(null);
+    }
+  };
+
   // Save Page-level Follow-up Settings
   const handleSavePageSettings = async (updatedSettings?: Partial<PageFollowUpSettings>) => {
     const payload = {
@@ -1310,13 +1338,29 @@ export default function FollowUpPage() {
                         </td>
 
                         <td className="py-4 px-4 text-right">
-                          <button
-                            onClick={() => setHistoryModalConv(c)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-purple-600 bg-purple-50 hover:bg-purple-100 transition-colors"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            মেসেজ দেখুন
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleInstantFollowUp(c.id)}
+                              disabled={sendingInstantId === c.id}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 transition-colors shadow-2xs disabled:opacity-50"
+                              title="এই গ্রাহককে এখনই তাৎক্ষণিক ফলো-আপ বার্তা পাঠান"
+                            >
+                              {sendingInstantId === c.id ? (
+                                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              ) : (
+                                <Send className="w-3 h-3" />
+                              )}
+                              <span>এখনই পাঠান</span>
+                            </button>
+
+                            <button
+                              onClick={() => setHistoryModalConv(c)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-purple-600 bg-purple-50 hover:bg-purple-100 transition-colors"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              মেসেজ দেখুন
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

@@ -1,16 +1,17 @@
-﻿version: '3.8'
+version: '3.8'
 
 services:
   replyx-ai:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: replyx_ai_saas
     restart: always
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
-      - DATABASE_URL=file:./dev.db
-      - JWT_SECRET=replyx_ai_production_super_secret_jwt_key_2026
-      - ENCRYPTION_KEY=12345678901234567890123456789012
-      - NEXT_PUBLIC_APP_URL=http://localhost:3000
-    volumes:
-      - ./prisma:/app/prisma
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0

@@ -45,8 +45,10 @@ function loadEnvFromDisk(): void {
 loadEnvFromDisk();
 
 const DEFAULT_SUPABASE_DATABASE_URL =
+  process.env.DATABASE_URL ||
   'postgresql://postgres.toucabgdgfrkpohwkzki:Nm%40102060%40nm@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true';
 const DEFAULT_SUPABASE_DIRECT_URL =
+  process.env.DIRECT_URL ||
   'postgresql://postgres.toucabgdgfrkpohwkzki:Nm%40102060%40nm@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres';
 
 function getDatabaseUrl(): string {
@@ -64,15 +66,15 @@ function getDatabaseUrl(): string {
     return directUrl;
   }
 
-  // 3. Fallback to Supabase project URL
-  return DEFAULT_SUPABASE_DATABASE_URL;
+  // 3. Fallback to DATABASE_URL if available
+  return envUrl || DEFAULT_SUPABASE_DATABASE_URL;
 }
 
 const dbUrl = getDatabaseUrl();
 if (typeof process !== 'undefined' && process.env) {
   process.env['DATABASE_URL'] = dbUrl;
   if (!process.env['DIRECT_URL'] || !process.env['DIRECT_URL'].startsWith('postgres')) {
-    process.env['DIRECT_URL'] = DEFAULT_SUPABASE_DIRECT_URL;
+    process.env['DIRECT_URL'] = process.env.DIRECT_URL || DEFAULT_SUPABASE_DIRECT_URL;
   }
 }
 

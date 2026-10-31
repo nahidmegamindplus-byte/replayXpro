@@ -16,7 +16,9 @@
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:studio": "prisma studio",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "hostinger:setup": "node scripts/hostinger-setup.js",
+    "hostinger:build": "prisma generate && next build && node scripts/copy-assets.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",

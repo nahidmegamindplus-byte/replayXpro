@@ -63,14 +63,14 @@ if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = 'production';
 }
 
-const prismaDbPath = path.resolve(__dirname, 'prisma', 'dev.db');
 if (!process.env.DATABASE_URL) {
-  try {
-    const schemaContent = fs.readFileSync(path.resolve(__dirname, 'prisma', 'schema.prisma'), 'utf8');
-    if (schemaContent.includes('provider = "sqlite"') || schemaContent.includes('provider  = "sqlite"')) {
-      process.env.DATABASE_URL = `file:${prismaDbPath}`;
-    }
-  } catch (_) {}
+  process.env.DATABASE_URL = 'postgresql://postgres.toucabgdgfrkpohwkzki:Nm%40102060%40nm@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true';
+}
+if (!process.env.DIRECT_URL) {
+  process.env.DIRECT_URL = 'postgresql://postgres.toucabgdgfrkpohwkzki:Nm%40102060%40nm@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres';
+}
+if (!process.env.SUPABASE_URL) {
+  process.env.SUPABASE_URL = 'https://toucabgdgfrkpohwkzki.supabase.co';
 }
 if (!process.env.JWT_SECRET) {
   process.env.JWT_SECRET = 'replyx_ai_super_secret_jwt_key_2026_bd_secure';
