@@ -8,11 +8,11 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build && node scripts/copy-assets.js",
+    "build": "node scripts/ensure-env.js && prisma generate && next build && node scripts/copy-assets.js",
     "start": "node server.js",
     "start:next": "next start",
     "lint": "next lint",
-    "postinstall": "prisma generate",
+    "postinstall": "node scripts/ensure-env.js && prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:studio": "prisma studio",
@@ -35,7 +35,6 @@
     "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
-    "@netlify/plugin-nextjs": "^5.15.13",
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^20.17.0",
