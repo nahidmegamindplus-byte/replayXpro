@@ -32,6 +32,7 @@ export async function GET(
         },
         orders: {
           orderBy: { createdAt: 'desc' },
+          take: 10,
         },
       },
     });
@@ -43,21 +44,23 @@ export async function GET(
       );
     }
 
-    // Fetch messages
+    // Fetch messages efficiently (latest 100 in chronological order)
     const messages = await prisma.message.findMany({
       where: {
         conversationId: params.id,
         userId: auth.user.id,
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
     });
+    messages.reverse();
 
-    // Reset unread count
+    // Reset unread count non-blocking in background
     if (conversation.unreadCount > 0) {
-      await prisma.conversation.update({
+      prisma.conversation.update({
         where: { id: params.id },
         data: { unreadCount: 0 },
-      });
+      }).catch(() => {});
     }
 
     return NextResponse.json({

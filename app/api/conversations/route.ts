@@ -44,7 +44,21 @@ export async function GET(req: NextRequest) {
         orderBy: { lastMessageAt: 'desc' },
         skip,
         take: limit,
-        include: {
+        select: {
+          id: true,
+          userId: true,
+          pageId: true,
+          channel: true,
+          senderPsid: true,
+          customerName: true,
+          lastMessage: true,
+          lastMessageAt: true,
+          status: true,
+          aiEnabled: true,
+          unreadCount: true,
+          lastSeenAt: true,
+          lastFollowUpSentAt: true,
+          createdAt: true,
           page: {
             select: {
               id: true,
@@ -52,12 +66,6 @@ export async function GET(req: NextRequest) {
               channelIdentifier: true,
               pageName: true,
               facebookPageId: true,
-            },
-          },
-          _count: {
-            select: {
-              messages: true,
-              orders: true,
             },
           },
         },
