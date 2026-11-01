@@ -29,7 +29,8 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 5,
   viewportFit: 'cover',
-  themeColor: '#ffffff',
+  themeColor: '#4f46e5',
+  interactiveWidget: 'resizes-content',
 };
 
 function getInlinedCss(): string {

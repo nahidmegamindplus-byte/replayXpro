@@ -41,6 +41,9 @@ export default function ConversationsPage() {
   const toast = useToast();
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
 
+  // In-memory instant message cache for 0ms conversation switching
+  const messagesCacheRef = useRef<Record<string, { conversation: any; messages: any[] }>>({});
+
   const [conversations, setConversations] = useState<any[]>([]);
   const [selectedConv, setSelectedConv] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
@@ -119,18 +122,32 @@ export default function ConversationsPage() {
   };
 
   const loadConversation = async (id: string, openMobileChat = true) => {
-    try {
-      setLoadingMessages(true);
-      if (openMobileChat) {
-        setMobileShowChat(true);
-      }
+    if (openMobileChat) {
+      setMobileShowChat(true);
+    }
 
+    // Instant switch if conversation is already in cache (0ms delay)
+    const cached = messagesCacheRef.current[id];
+    if (cached) {
+      setSelectedConv(cached.conversation);
+      setMessages(cached.messages);
+      setLoadingMessages(false);
+      setTimeout(() => scrollToBottom(false), 30);
+    } else {
+      setLoadingMessages(true);
+    }
+
+    try {
       const data = await apiFetch<any>(`/api/conversations/${id}`, { retries: 2 });
 
       if (data?.success && data.conversation) {
+        messagesCacheRef.current[id] = {
+          conversation: data.conversation,
+          messages: data.messages || [],
+        };
         setSelectedConv(data.conversation);
         setMessages(data.messages || []);
-        // Setup order form defaults
+
         setOrderForm({
           customerName: data.conversation.customerName || '',
           phone: '',
@@ -141,13 +158,12 @@ export default function ConversationsPage() {
           notes: '',
         });
 
-        // Instant scroll to bottom without page jump
         setTimeout(() => {
           scrollToBottom(false);
-        }, 60);
+        }, 50);
       }
     } catch (e) {
-      toast.error('মেসেজ লোড করতে সমস্যা হয়েছে।');
+      if (!cached) toast.error('মেসেজ লোড করতে সমস্যা হয়েছে।');
     } finally {
       setLoadingMessages(false);
     }
@@ -241,10 +257,36 @@ export default function ConversationsPage() {
 
   const handleSendManualReply = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedConv || !replyText.trim()) return;
+    if (!selectedConv || !replyText.trim() || sending) return;
 
-    setSending(true);
     const sentText = replyText.trim();
+    setSending(true);
+    setReplyText('');
+
+    // Instant Optimistic Message Bubble in UI (0ms delay)
+    const tempId = `optimistic-${Date.now()}`;
+    const optimisticMsg: any = {
+      id: tempId,
+      conversationId: selectedConv.id,
+      direction: 'OUTGOING',
+      messageText: sentText,
+      createdAt: new Date().toISOString(),
+      aiGenerated: false,
+      isPending: true,
+    };
+
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setTimeout(() => scrollToBottom(true), 40);
+
+    // Update conversation preview in sidebar
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === selectedConv.id
+          ? { ...c, lastMessage: sentText, lastMessageAt: new Date().toISOString() }
+          : c
+      )
+    );
+
     try {
       const res = await fetch(`/api/conversations/${selectedConv.id}`, {
         method: 'POST',
@@ -253,27 +295,28 @@ export default function ConversationsPage() {
       });
 
       const data = await res.json();
-      if (data.success) {
-        setReplyText('');
-        setMessages((prev) => [...prev, data.savedMessage]);
-        // Update current conversation last message preview
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === selectedConv.id
-              ? { ...c, lastMessage: sentText, lastMessageAt: new Date().toISOString() }
-              : c
-          )
+      if (data.success && data.savedMessage) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === tempId ? data.savedMessage : m))
         );
-        toast.success('মেসেজ সফলভাবে পাঠানো হয়েছে!');
-
-        // Smooth scroll to newly added message
-        setTimeout(() => {
-          scrollToBottom(true);
-        }, 80);
+        // Sync cache
+        if (messagesCacheRef.current[selectedConv.id]) {
+          messagesCacheRef.current[selectedConv.id].messages = (
+            messagesCacheRef.current[selectedConv.id].messages || []
+          )
+            .filter((m) => m.id !== tempId)
+            .concat(data.savedMessage);
+        }
+        setTimeout(() => scrollToBottom(true), 60);
       } else {
+        // Rollback on error
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        setReplyText(sentText);
         toast.error(data.error || 'মেসেজ পাঠাতে ব্যর্থ হয়েছে।');
       }
     } catch (e) {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      setReplyText(sentText);
       toast.error('মেসেজ পাঠাতে সমস্যা হয়েছে।');
     } finally {
       setSending(false);
@@ -375,8 +418,9 @@ export default function ConversationsPage() {
     <DashboardLayout
       title="ইনবক্স ও লাইভ কনভারসেশন"
       subtitle="কাস্টমারের সাথে সরাসরি চ্যাট করুন, ভয়েস মেসেজ ও AI উত্তর নিয়ন্ত্রণ করুন"
+      noPaddingMobile={true}
     >
-      <div className="bg-white border border-slate-200/90 rounded-3xl shadow-sm overflow-hidden grid grid-cols-1 lg:grid-cols-12 h-[calc(100vh-140px)] min-h-[620px] max-h-[920px]">
+      <div className="bg-white border-0 sm:border border-slate-200/90 rounded-none sm:rounded-3xl shadow-none sm:shadow-sm overflow-hidden grid grid-cols-1 lg:grid-cols-12 h-[calc(100dvh-57px)] sm:h-[calc(100dvh-135px)] min-h-0 sm:min-h-[580px] max-h-none sm:max-h-[920px]">
         {/* ========================================================================= */}
         {/* Left Pane: Customer List / Inbox (4 Columns)                              */}
         {/* ========================================================================= */}

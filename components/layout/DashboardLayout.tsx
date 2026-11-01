@@ -12,13 +12,14 @@ interface DashboardLayoutProps {
   children: React.ReactNode;
   title: string;
   subtitle?: string;
+  noPaddingMobile?: boolean;
 }
 
 // In-memory module cache for instant sub-page navigation without blocking loading spinner
 let cachedDashboardUser: any = null;
 let cachedIsImpersonated: boolean = false;
 
-export default function DashboardLayout({ children, title, subtitle }: DashboardLayoutProps) {
+export default function DashboardLayout({ children, title, subtitle, noPaddingMobile = false }: DashboardLayoutProps) {
   const router = useRouter();
   const [user, setUser] = useState<any>(cachedDashboardUser);
   const [isImpersonated, setIsImpersonated] = useState<boolean>(cachedIsImpersonated);
@@ -164,7 +165,7 @@ export default function DashboardLayout({ children, title, subtitle }: Dashboard
             onToggleCollapse={handleToggleCollapse}
           />
 
-          <main className="flex-1 p-3.5 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto min-w-0">
+          <main className={`flex-1 ${noPaddingMobile ? 'p-0 sm:p-6 lg:p-8' : 'p-3.5 sm:p-6 lg:p-8'} max-w-7xl w-full mx-auto min-w-0`}>
             {children}
           </main>
         </div>
