@@ -63,10 +63,15 @@ export async function GET(
       }).catch(() => {});
     }
 
+    const normalizedAiEnabled = Boolean(conversation.aiEnabled && conversation.status !== 'HUMAN_MODE');
+    const normalizedStatus = normalizedAiEnabled ? 'ACTIVE' : 'HUMAN_MODE';
+
     return NextResponse.json({
       success: true,
       conversation: {
         ...conversation,
+        aiEnabled: normalizedAiEnabled,
+        status: normalizedStatus,
         unreadCount: 0,
       },
       messages,
@@ -109,7 +114,7 @@ export async function POST(
     }
 
     const body = await req.json();
-    const { messageText } = body;
+    const { messageText, switchToHumanMode = true } = body;
 
     if (!messageText || !messageText.trim()) {
       return NextResponse.json(
@@ -166,13 +171,19 @@ export async function POST(
       },
     });
 
-    // Update conversation last message
-    await prisma.conversation.update({
+    // Update conversation last message & ensure Human Mode if replying manually
+    const updateConvData: any = {
+      lastMessage: cleanText,
+      lastMessageAt: new Date(),
+    };
+    if (switchToHumanMode) {
+      updateConvData.aiEnabled = false;
+      updateConvData.status = 'HUMAN_MODE';
+    }
+
+    const updatedConv = await prisma.conversation.update({
       where: { id: conversation.id },
-      data: {
-        lastMessage: cleanText,
-        lastMessageAt: new Date(),
-      },
+      data: updateConvData,
     });
 
     await logActivity({
@@ -182,10 +193,17 @@ export async function POST(
       description: `ম্যানুয়াল মেসেজ পাঠানো হয়েছে গ্রাহক ${conversation.customerName || conversation.senderPsid}-কে`,
     });
 
+    const isNowActive = Boolean(updatedConv.aiEnabled && updatedConv.status !== 'HUMAN_MODE');
+
     return NextResponse.json({
       success: true,
       message: 'মেসেজ পাঠানো হয়েছে!',
       savedMessage,
+      conversation: {
+        ...updatedConv,
+        aiEnabled: isNowActive,
+        status: isNowActive ? 'ACTIVE' : 'HUMAN_MODE',
+      },
     });
   } catch (error: any) {
     console.error('Error sending human message:', error);
@@ -229,13 +247,12 @@ export async function PATCH(
       updateData.customerName = customerName.trim();
     }
     if (aiEnabled !== undefined) {
-      updateData.aiEnabled = Boolean(aiEnabled);
-      updateData.status = aiEnabled ? 'ACTIVE' : 'HUMAN_MODE';
-    }
-    if (status !== undefined) {
+      const isEnabled = Boolean(aiEnabled);
+      updateData.aiEnabled = isEnabled;
+      updateData.status = isEnabled ? 'ACTIVE' : 'HUMAN_MODE';
+    } else if (status !== undefined) {
       updateData.status = status;
-      if (status === 'HUMAN_MODE') updateData.aiEnabled = false;
-      if (status === 'ACTIVE') updateData.aiEnabled = true;
+      updateData.aiEnabled = status === 'ACTIVE';
     }
 
     const updated = await prisma.conversation.update({
@@ -243,17 +260,24 @@ export async function PATCH(
       data: updateData,
     });
 
+    const isNowActive = Boolean(updated.aiEnabled && updated.status !== 'HUMAN_MODE');
+    const finalConv = {
+      ...updated,
+      aiEnabled: isNowActive,
+      status: isNowActive ? 'ACTIVE' : 'HUMAN_MODE',
+    };
+
     await logActivity({
       userId: auth.user.id,
       pageId: updated.pageId,
-      action: updated.aiEnabled ? 'AI_RESUMED' : 'AI_PAUSED',
-      description: `কথোপকথনে AI ${updated.aiEnabled ? 'চালু' : 'স্থগিত'} করা হয়েছে: ${updated.customerName || updated.senderPsid}`,
+      action: isNowActive ? 'AI_RESUMED' : 'AI_PAUSED',
+      description: `কথোপকথনে AI ${isNowActive ? 'চালু' : 'স্থগিত'} করা হয়েছে: ${updated.customerName || updated.senderPsid}`,
     });
 
     return NextResponse.json({
       success: true,
-      message: updated.aiEnabled ? 'AI পুনরায় সক্রিয় করা হয়েছে।' : 'AI স্থগিত করা হয়েছে (Human Mode সক্রিয়)।',
-      conversation: updated,
+      message: isNowActive ? 'AI পুনরায় সক্রিয় করা হয়েছে।' : 'AI স্থগিত করা হয়েছে (Human Mode সক্রিয়)।',
+      conversation: finalConv,
     });
   } catch (error: any) {
     return NextResponse.json(

@@ -27,7 +27,14 @@ export async function GET(req: NextRequest) {
     }
 
     if (status && status !== 'ALL') {
-      where.status = status;
+      if (status === 'HUMAN_MODE') {
+        where.OR = [{ status: 'HUMAN_MODE' }, { aiEnabled: false }];
+      } else if (status === 'ACTIVE') {
+        where.status = 'ACTIVE';
+        where.aiEnabled = true;
+      } else {
+        where.status = status;
+      }
     }
 
     if (channel && channel !== 'ALL') {
@@ -38,7 +45,7 @@ export async function GET(req: NextRequest) {
       where.pageId = pageId;
     }
 
-    const [conversations, total] = await Promise.all([
+    const [rawConversations, total] = await Promise.all([
       prisma.conversation.findMany({
         where,
         orderBy: { lastMessageAt: 'desc' },
@@ -72,6 +79,15 @@ export async function GET(req: NextRequest) {
       }),
       prisma.conversation.count({ where }),
     ]);
+
+    const conversations = rawConversations.map((c) => {
+      const isAiActive = Boolean(c.aiEnabled && c.status !== 'HUMAN_MODE');
+      return {
+        ...c,
+        aiEnabled: isAiActive,
+        status: isAiActive ? 'ACTIVE' : 'HUMAN_MODE',
+      };
+    });
 
     return NextResponse.json({
       success: true,

@@ -360,7 +360,7 @@ export default function ConversationsPage() {
       const res = await fetch(`/api/conversations/${selectedConv.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messageText: sentText }),
+        body: JSON.stringify({ messageText: sentText, switchToHumanMode: true }),
       });
 
       const data = await res.json();
@@ -375,6 +375,15 @@ export default function ConversationsPage() {
           )
             .filter((m) => m.id !== tempId)
             .concat(data.savedMessage);
+          if (data.conversation) {
+            messagesCacheRef.current[selectedConv.id].conversation = data.conversation;
+          }
+        }
+        if (data.conversation) {
+          setSelectedConv(data.conversation);
+          setConversations((prev) =>
+            prev.map((c) => (c.id === selectedConv.id ? data.conversation : c))
+          );
         }
         setTimeout(() => scrollToBottom(true), 60);
       } else {
@@ -392,12 +401,17 @@ export default function ConversationsPage() {
     }
   };
 
+  // Safe check if a conversation has AI Active or Human Mode
+  const isConvAiActive = (c: any) => Boolean(c?.aiEnabled) && c?.status !== 'HUMAN_MODE';
+
   const handleToggleAiForConv = async (convId: string, targetAiEnabled: boolean) => {
+    const targetStatus = targetAiEnabled ? 'ACTIVE' : 'HUMAN_MODE';
+
     // 1. Optimistic UI update immediately (0ms delay)
     setConversations((prev) => {
       const updated = prev.map((c) =>
         c.id === convId
-          ? { ...c, aiEnabled: targetAiEnabled, status: targetAiEnabled ? 'ACTIVE' : 'HUMAN_MODE' }
+          ? { ...c, aiEnabled: targetAiEnabled, status: targetStatus }
           : c
       );
       moduleCachedInboxList = updated;
@@ -411,13 +425,13 @@ export default function ConversationsPage() {
       setSelectedConv((prev: any) => ({
         ...prev,
         aiEnabled: targetAiEnabled,
-        status: targetAiEnabled ? 'ACTIVE' : 'HUMAN_MODE',
+        status: targetStatus,
       }));
     }
 
     if (messagesCacheRef.current[convId]?.conversation) {
       messagesCacheRef.current[convId].conversation.aiEnabled = targetAiEnabled;
-      messagesCacheRef.current[convId].conversation.status = targetAiEnabled ? 'ACTIVE' : 'HUMAN_MODE';
+      messagesCacheRef.current[convId].conversation.status = targetStatus;
     }
 
     toast.success(
@@ -432,28 +446,37 @@ export default function ConversationsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           aiEnabled: targetAiEnabled,
-          status: targetAiEnabled ? 'ACTIVE' : 'HUMAN_MODE',
+          status: targetStatus,
         }),
       });
 
       const data = await res.json();
-      if (!data.success) {
+      if (data.success && data.conversation) {
+        setConversations((prev) =>
+          prev.map((c) => (c.id === convId ? { ...c, ...data.conversation } : c))
+        );
+        if (selectedConv?.id === convId) {
+          setSelectedConv((prev: any) => ({ ...prev, ...data.conversation }));
+        }
+      } else {
         throw new Error(data.error);
       }
     } catch (e: any) {
       // Revert on failure
+      const revertAi = !targetAiEnabled;
+      const revertStatus = revertAi ? 'ACTIVE' : 'HUMAN_MODE';
       setConversations((prev) =>
         prev.map((c) =>
           c.id === convId
-            ? { ...c, aiEnabled: !targetAiEnabled, status: !targetAiEnabled ? 'ACTIVE' : 'HUMAN_MODE' }
+            ? { ...c, aiEnabled: revertAi, status: revertStatus }
             : c
         )
       );
       if (selectedConv?.id === convId) {
         setSelectedConv((prev: any) => ({
           ...prev,
-          aiEnabled: !targetAiEnabled,
-          status: !targetAiEnabled ? 'ACTIVE' : 'HUMAN_MODE',
+          aiEnabled: revertAi,
+          status: revertStatus,
         }));
       }
       toast.error('মোড পরিবর্তন করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
@@ -462,7 +485,7 @@ export default function ConversationsPage() {
 
   const handleToggleAi = () => {
     if (!selectedConv) return;
-    handleToggleAiForConv(selectedConv.id, !selectedConv.aiEnabled);
+    handleToggleAiForConv(selectedConv.id, !isConvAiActive(selectedConv));
   };
 
   const handleUpdateCustomerName = async (e: React.FormEvent) => {
@@ -712,16 +735,16 @@ export default function ConversationsPage() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleToggleAiForConv(c.id, !c.aiEnabled);
+                            handleToggleAiForConv(c.id, !isConvAiActive(c));
                           }}
-                          title={c.aiEnabled ? 'হিউম্যান মোডে নিতে ক্লিক করুন (AI বন্ধ হবে)' : 'AI চালু করতে ক্লিক করুন'}
+                          title={isConvAiActive(c) ? 'হিউম্যান মোডে নিতে ক্লিক করুন (AI বন্ধ হবে)' : 'AI চালু করতে ক্লিক করুন'}
                           className={`px-2 py-0.5 rounded-full flex items-center gap-1 font-bold transition-all text-[9.5px] shrink-0 active:scale-95 shadow-2xs ${
-                            c.aiEnabled
+                            isConvAiActive(c)
                               ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
                               : 'text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 ring-2 ring-amber-400/20'
                           }`}
                         >
-                          {c.aiEnabled ? (
+                          {isConvAiActive(c) ? (
                             <>
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                               <span>AI চালু</span>
@@ -843,7 +866,7 @@ export default function ConversationsPage() {
                       type="button"
                       onClick={() => handleToggleAiForConv(selectedConv.id, true)}
                       className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all ${
-                        selectedConv.aiEnabled
+                        isConvAiActive(selectedConv)
                           ? 'bg-emerald-600 text-white shadow-xs'
                           : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
                       }`}
@@ -857,7 +880,7 @@ export default function ConversationsPage() {
                       type="button"
                       onClick={() => handleToggleAiForConv(selectedConv.id, false)}
                       className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all ${
-                        !selectedConv.aiEnabled
+                        !isConvAiActive(selectedConv)
                           ? 'bg-amber-500 text-slate-950 shadow-xs ring-2 ring-amber-300 font-extrabold'
                           : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
                       }`}
@@ -1011,7 +1034,7 @@ export default function ConversationsPage() {
               )}
 
               {/* Dedicated Human Mode Active Alert Ribbon */}
-              {!selectedConv.aiEnabled && (
+              {!isConvAiActive(selectedConv) && (
                 <div className="px-3.5 py-2 bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-amber-500/5 border-b border-amber-300 text-amber-950 text-xs flex items-center justify-between gap-2 shrink-0 animate-fadeIn">
                   <div className="flex items-center gap-2 min-w-0">
                     <div className="w-5 h-5 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 shadow-xs">
@@ -1203,16 +1226,16 @@ export default function ConversationsPage() {
                   {/* Quick 1-Click Human Mode Toggle in Input Bar */}
                   <button
                     type="button"
-                    onClick={() => handleToggleAiForConv(selectedConv.id, !selectedConv.aiEnabled)}
+                    onClick={() => handleToggleAiForConv(selectedConv.id, !isConvAiActive(selectedConv))}
                     className={`px-2.5 py-2 rounded-xl border text-[11px] sm:text-xs font-bold transition-all shrink-0 h-[42px] flex items-center gap-1.5 ${
-                      !selectedConv.aiEnabled
+                      !isConvAiActive(selectedConv)
                         ? 'bg-amber-500 text-slate-950 border-amber-600 ring-2 ring-amber-300'
                         : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
                     }`}
-                    title={selectedConv.aiEnabled ? 'হিউম্যান মোডে নিন (AI বন্ধ হবে)' : 'AI চালু করুন'}
+                    title={isConvAiActive(selectedConv) ? 'হিউম্যান মোডে নিন (AI বন্ধ হবে)' : 'AI চালু করুন'}
                   >
                     <User className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">{!selectedConv.aiEnabled ? 'হিউম্যান' : 'AI'}</span>
+                    <span className="hidden sm:inline">{!isConvAiActive(selectedConv) ? 'হিউম্যান' : 'AI'}</span>
                   </button>
 
                   <div className="relative flex-1">

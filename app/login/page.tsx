@@ -38,6 +38,11 @@ function LoginFormContent() {
       }
 
       toast.success('সফলভাবে লগইন হয়েছে!');
+      try {
+        if (data.user) {
+          localStorage.setItem('replyx_auth_user', JSON.stringify(data.user));
+        }
+      } catch (_) {}
       const redirectParam = searchParams ? searchParams.get('redirect') : null;
       if (redirectParam) {
         router.push(redirectParam);

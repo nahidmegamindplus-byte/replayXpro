@@ -15,15 +15,33 @@ interface DashboardLayoutProps {
   noPaddingMobile?: boolean;
 }
 
-// In-memory module cache for instant sub-page navigation without blocking loading spinner
+// Fast in-memory and persistent cache for instant 0ms dashboard loading
 let cachedDashboardUser: any = null;
 let cachedIsImpersonated: boolean = false;
 
+if (typeof window !== 'undefined') {
+  try {
+    const saved = localStorage.getItem('replyx_auth_user');
+    if (saved) {
+      cachedDashboardUser = JSON.parse(saved);
+    }
+  } catch (_) {}
+}
+
 export default function DashboardLayout({ children, title, subtitle, noPaddingMobile = false }: DashboardLayoutProps) {
   const router = useRouter();
-  const [user, setUser] = useState<any>(cachedDashboardUser);
+  const [user, setUser] = useState<any>(() => {
+    if (cachedDashboardUser) return cachedDashboardUser;
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('replyx_auth_user');
+        if (saved) return JSON.parse(saved);
+      } catch (_) {}
+    }
+    return null;
+  });
   const [isImpersonated, setIsImpersonated] = useState<boolean>(cachedIsImpersonated);
-  const [loading, setLoading] = useState(!cachedDashboardUser);
+  const [loading, setLoading] = useState(!user);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [exitingImpersonation, setExitingImpersonation] = useState(false);
@@ -53,13 +71,17 @@ export default function DashboardLayout({ children, title, subtitle, noPaddingMo
 
     async function checkAuth() {
       try {
-        const data = await apiFetch<any>('/api/auth/me', { retries: 2, retryDelayMs: 400, timeoutMs: 8000 });
+        const data = await apiFetch<any>('/api/auth/me', { retries: 1, retryDelayMs: 300, timeoutMs: 6000 });
         if (!isMounted) return;
 
         if (data && data.success && data.user) {
           cachedDashboardUser = data.user;
           cachedIsImpersonated = Boolean(data.isImpersonated);
           setIsImpersonated(cachedIsImpersonated);
+
+          try {
+            localStorage.setItem('replyx_auth_user', JSON.stringify(data.user));
+          } catch (_) {}
 
           // Gating: If normal user does not have an active package and not impersonated, redirect to /subscribe
           if (!data.isImpersonated && data.user.role !== 'ADMIN' && data.user.planStatus !== 'ACTIVE') {
@@ -70,10 +92,13 @@ export default function DashboardLayout({ children, title, subtitle, noPaddingMo
         } else {
           cachedDashboardUser = null;
           cachedIsImpersonated = false;
+          try {
+            localStorage.removeItem('replyx_auth_user');
+          } catch (_) {}
           router.push('/login');
         }
       } catch (err) {
-        if (!cachedDashboardUser) {
+        if (!cachedDashboardUser && !user) {
           router.push('/login');
         }
       } finally {
