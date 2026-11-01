@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "node scripts/ensure-env.js && prisma generate && next build && node scripts/copy-assets.js",
+    "build": "node scripts/build.js",
     "start": "node server.js",
     "start:next": "next start",
     "lint": "next lint",
@@ -18,7 +18,7 @@
     "prisma:studio": "prisma studio",
     "seed": "node scripts/seed.js",
     "hostinger:setup": "node scripts/hostinger-setup.js",
-    "hostinger:build": "prisma generate && next build && node scripts/copy-assets.js"
+    "hostinger:build": "node scripts/build.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
