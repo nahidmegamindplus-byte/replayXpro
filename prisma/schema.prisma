@@ -97,7 +97,7 @@ model Page {
   followUpEnabled           Boolean       @default(false)
   followUpWaitMinutes       Int           @default(30) // Minutes to wait after seen/last message (e.g. 1, 5, 15, 30, 60)
   followUpMessage           String?       // Custom follow-up message template
-  followUpOnlySeen          Boolean       @default(true) // Only send if customer seen/read the message
+  followUpOnlySeen          Boolean       @default(false) // Default false for maximum delivery/recovery
   followUpMaxCount          Int           @default(5) // How many times total: 1, 2, 3, 5, or 99
   followUpFrequency         String        @default("CUSTOM_INTERVAL") // "ONCE", "DAILY", "CUSTOM_INTERVAL"
   followUpIntervalHours     Int           @default(24) // If DAILY or CUSTOM_INTERVAL: gap in hours between subsequent follow-ups

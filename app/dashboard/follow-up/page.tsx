@@ -103,7 +103,7 @@ export default function FollowUpPage() {
   const [pageSettings, setPageSettings] = useState<PageFollowUpSettings>({
     followUpEnabled: true,
     followUpWaitMinutes: 30,
-    followUpOnlySeen: true,
+    followUpOnlySeen: false,
     followUpFrequency: 'CUSTOM_INTERVAL',
     followUpIntervalHours: 24,
     followUpMaxCount: 5,

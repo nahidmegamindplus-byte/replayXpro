@@ -124,25 +124,32 @@ export async function sendFacebookText(
 
     let data = await res.json();
 
-    // 2. Second attempt: If rejected due to 24h window policy, retry with MESSAGE_TAG
+    // 2. Second attempt: If rejected due to 24h window policy, retry with standard MESSAGE_TAGs
     if (
       (!res.ok || data.error) &&
       (data.error?.code === 10 ||
         data.error?.error_subcode === 2018278 ||
         data.error?.message?.includes('window') ||
-        data.error?.message?.includes('tag'))
+        data.error?.message?.includes('tag') ||
+        data.error?.message?.includes('policy'))
     ) {
-      res = await fetch(`${GRAPH_BASE_URL}/me/messages?access_token=${encodeURIComponent(cleanToken)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recipient: { id: senderPsid },
-          messaging_type: 'MESSAGE_TAG',
-          tag: 'CONFIRMED_EVENT_UPDATE',
-          message: { text },
-        }),
-      });
-      data = await res.json();
+      const allowedTags = ['POST_PURCHASE_UPDATE', 'CONFIRMED_EVENT_UPDATE', 'ACCOUNT_UPDATE'];
+      for (const tag of allowedTags) {
+        try {
+          res = await fetch(`${GRAPH_BASE_URL}/me/messages?access_token=${encodeURIComponent(cleanToken)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              recipient: { id: senderPsid },
+              messaging_type: 'MESSAGE_TAG',
+              tag,
+              message: { text },
+            }),
+          });
+          data = await res.json();
+          if (res.ok && !data.error) break;
+        } catch (_) {}
+      }
     }
 
     if (!res.ok || data.error) {

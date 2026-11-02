@@ -81,6 +81,7 @@ if (!process.env.ENCRYPTION_KEY) {
 
 // 5. Ensure prisma directory exists with write permissions for SQLite
 const prismaDir = path.resolve(__dirname, 'prisma');
+const prismaDbPath = path.join(prismaDir, 'dev.db');
 if (!fs.existsSync(prismaDir)) {
   try {
     fs.mkdirSync(prismaDir, { recursive: true, mode: 0o777 });
@@ -93,23 +94,6 @@ if (fs.existsSync(prismaDbPath)) {
 }
 
 // 6. Ensure _next directory mirror exists on disk for LiteSpeed Web Server
-function ensureStaticMirror() {
-  try {
-    const nextStatic = path.join(__dirname, '.next', 'static');
-    const underscoreNext = path.join(__dirname, '_next');
-    const underscoreNextStatic = path.join(underscoreNext, 'static');
-    if (fs.existsSync(nextStatic)) {
-      if (!fs.existsSync(underscoreNext)) {
-        fs.mkdirSync(underscoreNext, { recursive: true });
-      }
-      if (fs.cpSync) {
-        fs.cpSync(nextStatic, underscoreNextStatic, { recursive: true, force: true, dereference: true });
-      }
-    }
-  } catch (err) {
-    // Non-blocking warning
-  }
-}
 ensureStaticMirror();
 
 // 7. Global Process Crash Guards
@@ -373,6 +357,7 @@ function copyDirSync(src, dest) {
 
 /**
  * Background warmup: triggers /api/health to self-heal database tables
+ * and runs continuous follow-up automation in the background
  */
 function triggerWarmup(target) {
   setTimeout(() => {
@@ -384,6 +369,38 @@ function triggerWarmup(target) {
         });
         req.on('error', () => {});
         req.setTimeout(5000, () => req.destroy());
+
+        // Background Follow-Up worker: pings cron endpoint every 60 seconds
+        const runBackgroundFollowUp = () => {
+          try {
+            const cronReq = http.get(
+              `http://127.0.0.1:${target}/api/cron/follow-up?key=replyx_internal_cron`,
+              (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                  if (res.statusCode === 200) {
+                    try {
+                      const json = JSON.parse(data);
+                      if (json.sentCount > 0) {
+                        console.log(`> [FollowUp Worker] Auto-dispatched ${json.sentCount} follow-up message(s)`);
+                      }
+                    } catch (_) {}
+                  }
+                });
+              }
+            );
+            cronReq.on('error', () => {});
+            cronReq.setTimeout(10000, () => cronReq.destroy());
+          } catch (_) {}
+        };
+
+        // First run after 15 seconds, then every 60 seconds
+        setTimeout(runBackgroundFollowUp, 15000);
+        const followUpTimer = setInterval(runBackgroundFollowUp, 60000);
+        if (followUpTimer && typeof followUpTimer.unref === 'function') {
+          followUpTimer.unref();
+        }
       }
     } catch (_) {}
   }, 1200);

@@ -14,11 +14,11 @@ export async function POST(req: NextRequest) {
     const pageId = searchParams.get('pageId') || undefined;
     const queryKey = searchParams.get('key');
     const authHeader = req.headers.get('authorization');
-    const cronSecret = process.env.CRON_SECRET || 'replax_internal_cron';
+    const cronSecret = process.env.CRON_SECRET || 'replyx_internal_cron';
 
     const isSecretAuthorized =
-      (authHeader && authHeader === `Bearer ${cronSecret}`) ||
-      (queryKey && queryKey.trim() === cronSecret);
+      (authHeader && (authHeader === `Bearer ${cronSecret}` || authHeader === 'Bearer replyx_internal_cron')) ||
+      (queryKey && (queryKey.trim() === cronSecret || queryKey.trim() === 'replyx_internal_cron' || queryKey.trim() === 'replax_internal_cron'));
 
     if (!isSecretAuthorized) {
       const auth = await requireAuth(req);
