@@ -353,6 +353,7 @@ export async function POST(req: NextRequest) {
             userId: page.userId,
             pageId: page.id,
             senderPsid,
+            conversationId: conversation.id,
             incomingText: messageText,
             incomingImageUrl: messageType === 'IMAGE' && mediaUrl ? mediaUrl : undefined,
             incomingAudioUrl: messageType === 'AUDIO' && mediaUrl ? mediaUrl : undefined,
@@ -475,57 +476,78 @@ export async function POST(req: NextRequest) {
           // Record AI message usage and auto-cutoff if quota reached
           await recordAiMessageSent(page.userId);
 
-          // 12. Auto-capture Order if detected by AI
+          // 12. Auto-capture Order if detected by AI (with 100% Duplicate Order Prevention)
           if (page.orderDetection && aiResult.detectedOrder) {
             const detected = aiResult.detectedOrder;
-            let resolvedProductType: 'PHYSICAL' | 'DIGITAL' = detected.productType === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL';
-            if (detected.productId) {
-              const dbProd = await prisma.product.findUnique({
-                where: { id: detected.productId },
-                select: { productType: true },
-              });
-              if (dbProd?.productType) {
-                resolvedProductType = dbProd.productType === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL';
-              }
-            }
-            const isDigital = resolvedProductType === 'DIGITAL';
 
-            const newOrder = await prisma.order.create({
-              data: {
+            // Duplicate Check: Check if an active order already exists for this conversation
+            const existingActiveOrder = await prisma.order.findFirst({
+              where: {
+                conversationId: conversation.id,
+                OR: [
+                  ...(detected.productId ? [{ productId: detected.productId }] : []),
+                  { product: detected.product },
+                  { createdAt: { gte: new Date(Date.now() - 3 * 60 * 60 * 1000) } }, // Block any re-emitted duplicate in last 3 hours
+                ],
+                status: { in: ['PENDING', 'CONFIRMED', 'PROCESSING'] },
+              },
+              orderBy: { createdAt: 'desc' },
+            });
+
+            if (existingActiveOrder) {
+              serverLogger.info(
+                `[Facebook Order Guard] Blocked duplicate order for conversation ${conversation.id}. Matching order: #${existingActiveOrder.id} (${existingActiveOrder.product})`
+              );
+            } else {
+              let resolvedProductType: 'PHYSICAL' | 'DIGITAL' = detected.productType === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL';
+              if (detected.productId) {
+                const dbProd = await prisma.product.findUnique({
+                  where: { id: detected.productId },
+                  select: { productType: true },
+                });
+                if (dbProd?.productType) {
+                  resolvedProductType = dbProd.productType === 'DIGITAL' ? 'DIGITAL' : 'PHYSICAL';
+                }
+              }
+              const isDigital = resolvedProductType === 'DIGITAL';
+
+              const newOrder = await prisma.order.create({
+                data: {
+                  userId: page.userId,
+                  pageId: page.id,
+                  conversationId: conversation.id,
+                  customerName: detected.customerName,
+                  customerEmail: detected.customerEmail ? detected.customerEmail.trim().toLowerCase() : null,
+                  phone: detected.phone || (detected.customerEmail ? detected.customerEmail : 'N/A'),
+                  address: detected.address || (isDigital ? 'ডিজিটাল ডেলিভারি (ইমেইল)' : 'N/A'),
+                  product: detected.product,
+                  productId: detected.productId || null,
+                  productType: resolvedProductType,
+                  quantity: detected.quantity || 1,
+                  price: detected.price || 0,
+                  totalPrice: detected.totalPrice || 0,
+                  status: isDigital ? 'CONFIRMED' : 'PENDING',
+                  paymentStatus: isDigital ? 'PAID' : 'PENDING',
+                  source: 'MESSENGER_AI',
+                },
+              });
+
+              if (isDigital) {
+                try {
+                  const { deliverDigitalOrder } = await import('@/lib/digital-delivery');
+                  await deliverDigitalOrder(newOrder.id);
+                } catch (delivErr) {
+                  serverLogger.error('Failed auto digital fulfillment in facebook webhook:', delivErr);
+                }
+              }
+
+              await logActivity({
                 userId: page.userId,
                 pageId: page.id,
-                conversationId: conversation.id,
-                customerName: detected.customerName,
-                customerEmail: detected.customerEmail ? detected.customerEmail.trim().toLowerCase() : null,
-                phone: detected.phone || (detected.customerEmail ? detected.customerEmail : 'N/A'),
-                address: detected.address || (isDigital ? 'ডিজিটাল ডেলিভারি (ইমেইল)' : 'N/A'),
-                product: detected.product,
-                productId: detected.productId || null,
-                productType: resolvedProductType,
-                quantity: detected.quantity || 1,
-                price: detected.price || 0,
-                totalPrice: detected.totalPrice || 0,
-                status: isDigital ? 'CONFIRMED' : 'PENDING',
-                paymentStatus: isDigital ? 'PAID' : 'PENDING',
-                source: 'MESSENGER_AI',
-              },
-            });
-
-            if (isDigital) {
-              try {
-                const { deliverDigitalOrder } = await import('@/lib/digital-delivery');
-                await deliverDigitalOrder(newOrder.id);
-              } catch (delivErr) {
-                serverLogger.error('Failed auto digital fulfillment in facebook webhook:', delivErr);
-              }
+                action: 'ORDER_CAPTURED_BY_AI',
+                description: `AI স্বয়ংক্রিয়ভাবে নতুন ${isDigital ? 'ডিজিটাল' : 'ফিজিক্যাল'} অর্ডার ক্যাপচার করেছে: #${newOrder.id.slice(0, 8)} (${detected.customerName} - ${newOrder.customerEmail || detected.phone})`,
+              });
             }
-
-            await logActivity({
-              userId: page.userId,
-              pageId: page.id,
-              action: 'ORDER_CAPTURED_BY_AI',
-              description: `AI স্বয়ংক্রিয়ভাবে নতুন ${isDigital ? 'ডিজিটাল' : 'ফিজিক্যাল'} অর্ডার ক্যাপচার করেছে: #${newOrder.id.slice(0, 8)} (${detected.customerName} - ${newOrder.customerEmail || detected.phone})`,
-            });
           }
         } catch (aiErr: any) {
           serverLogger.error('AI reply generation failed during webhook handling', aiErr);

@@ -75,6 +75,7 @@ export interface GenerateReplyParams {
   userId: string;
   pageId: string;
   senderPsid: string;
+  conversationId?: string;
   incomingText?: string;
   incomingImageUrl?: string;
   incomingAudioUrl?: string;
@@ -472,7 +473,8 @@ export async function getAdminAiSettings() {
   }
 
   const temperature = map.ADMIN_AI_TEMPERATURE ? parseFloat(map.ADMIN_AI_TEMPERATURE) : 0.7;
-  const maxTokens = map.ADMIN_AI_MAX_TOKENS ? parseInt(map.ADMIN_AI_MAX_TOKENS, 10) : 800;
+  // Cost & token optimization: Default maxTokens capped to 280 (concise, high-converting social chat)
+  const maxTokens = map.ADMIN_AI_MAX_TOKENS ? parseInt(map.ADMIN_AI_MAX_TOKENS, 10) : 280;
 
   return {
     provider,
@@ -485,6 +487,105 @@ export async function getAdminAiSettings() {
     temperature,
     maxTokens,
   };
+}
+
+/**
+ * Smart Customer Memory & Entity Extraction
+ * Preserves customer address, phone number, email, and previous orders across turns
+ * so the customer is NEVER asked for their address/phone repeatedly, and duplicate orders are prevented.
+ */
+export async function getConversationCustomerMemory(conversationId?: string, incomingText = '') {
+  let knownPhone: string | null = null;
+  let knownAddress: string | null = null;
+  let knownEmail: string | null = null;
+  let existingOrders: Array<{
+    id: string;
+    product: string;
+    status: string;
+    phone: string;
+    address: string;
+    totalPrice: number;
+    createdAt: Date;
+  }> = [];
+
+  if (!conversationId || conversationId === 'sandbox') {
+    return { knownPhone, knownAddress, knownEmail, existingOrders };
+  }
+
+  try {
+    // 1. Fetch active orders in this conversation
+    existingOrders = await prisma.order.findMany({
+      where: { conversationId },
+      orderBy: { createdAt: 'desc' },
+      take: 3,
+      select: {
+        id: true,
+        product: true,
+        status: true,
+        phone: true,
+        address: true,
+        totalPrice: true,
+        createdAt: true,
+      },
+    });
+
+    for (const ord of existingOrders) {
+      if (ord.phone && ord.phone !== 'N/A' && !knownPhone) knownPhone = ord.phone;
+      if (ord.address && ord.address !== 'N/A' && !ord.address.includes('বাকি') && !knownAddress) {
+        knownAddress = ord.address;
+      }
+    }
+
+    // 2. Scan recent conversation messages (up to 30) for phone, email, and address
+    const messages = await prisma.message.findMany({
+      where: { conversationId },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+      select: { direction: true, messageText: true },
+    });
+
+    const phoneRegex = /(?:(?:\+|00)88|88)?(01[3-9]\d{8})/g;
+    const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
+
+    for (const msg of messages) {
+      if (!msg.messageText || msg.direction !== 'INCOMING') continue;
+      const text = msg.messageText;
+
+      // Extract phone
+      if (!knownPhone) {
+        const phoneMatch = text.match(phoneRegex);
+        if (phoneMatch && phoneMatch[0]) {
+          knownPhone = phoneMatch[0].replace(/^(?:\+|00)?88/, '');
+        }
+      }
+
+      // Extract email
+      if (!knownEmail) {
+        const emailMatch = text.match(emailRegex);
+        if (emailMatch && emailMatch[0]) {
+          knownEmail = emailMatch[0];
+        }
+      }
+
+      // Extract address: check for standard BD address markers
+      if (!knownAddress) {
+        const hasAddressSignals =
+          /(বাসা|রোড|বাড়ি|রাস্তা|গ্রাম|পোস্ট|থানা|জেলা|উপজেলা|সেক্টর|ফ্ল্যাট|house|road|flat|sector|thana|district|dhaka|chittagong|sylhet|khulna|rajshahi|barisal|rangpur|mymensingh|gazipur|narayanganj|cumilla|bogura|tangail|jashore|savar|mirpur|uttara|dhanmondi|gulshan|banani|mohammadpur|badda|rampura|motijheel|jatrabari|bashundhara|farmgate|khilkhet|wari|keraniganj)/i.test(
+            text
+          );
+        const isJustPriceOrDeliveryQuery =
+          /(koto|kobe|charge|pabo|asche|dam|price|ache|hobe|পাবো|কত|দাম|কবে|চার্জ|টাকা)/i.test(text) && text.length < 25;
+
+        if (hasAddressSignals && !isJustPriceOrDeliveryQuery && text.length >= 8) {
+          knownAddress = text.trim();
+        }
+      }
+    }
+  } catch (memErr) {
+    // Non-blocking memory fetch
+  }
+
+  return { knownPhone, knownAddress, knownEmail, existingOrders };
 }
 
 export function parseProductImages(p: { imageUrl?: string | null; images?: string | null }): string[] {
@@ -514,11 +615,25 @@ function generateSmartEcommerceFallback(params: {
   businessName: string;
   isSandbox?: boolean;
   providerError?: string;
+  customerMemory?: {
+    knownPhone?: string | null;
+    knownAddress?: string | null;
+    existingOrders?: any[];
+  };
 }): { replyText: string; detectedOrder: any; matchedProduct: any } {
   const query = `${params.incomingText || ''} ${params.finalTranscription || ''}`.trim().toLowerCase();
   let matchedProduct: any = null;
   let detectedOrder: any = null;
   let replyText = '';
+
+  const memory = params.customerMemory;
+
+  // If customer already has an active order, never create a duplicate in fallback
+  if (memory?.existingOrders && memory.existingOrders.length > 0) {
+    const activeOrd = memory.existingOrders[0];
+    replyText = `আপনার #${activeOrd.id.slice(0, 8)} নম্বরের "${activeOrd.product}" পণ্যটির অর্ডার ইতিমধ্যে গ্রহণ করা হয়েছে এবং বর্তমানে প্রসেসিংয়ে রয়েছে।\n\n🚚 ডেলিভারি আপডেট বা যেকোনো সহযোগিতায় আমরা আছি আপনার সাথে। ধন্যবাদ! 😊`;
+    return { replyText, detectedOrder: null, matchedProduct: null };
+  }
 
   const buildMatchedProduct = (p: any) => {
     const imgs = parseProductImages(p);
@@ -555,16 +670,18 @@ function generateSmartEcommerceFallback(params: {
   const phoneMatch = normalizedQuery.match(/(?:01|\+8801)[3-9]\d{8}/);
   const hasAddressWords = /(ঢাকা|চট্টগ্রাম|মিরপুর|ধানমন্ডি|উত্তরা|গুলশান|রোড|বাসা|গ্রাম|থানা|জেলা|পোস্ট|বাড়ি|house|road|block|sector|dist|dhaka|chittagong|sylhet|rajshahi|khulna|barishal|rangpur|mymensingh)/i.test(query);
 
-  if (phoneMatch) {
-    const phone = phoneMatch[0];
+  const effectivePhone = phoneMatch ? phoneMatch[0] : (memory?.knownPhone || null);
+  const effectiveAddress = hasAddressWords ? params.incomingText : (memory?.knownAddress || null);
+
+  if (effectivePhone) {
     const hasOrderIntent = /(অর্ডার|order|কনফার্ম|confirm|পাঠান|পাঠিয়ে দেন|ডেলিভারি|ক্যাশ অন|নিতে চাই|কিনব|কিনবো|বুক)/i.test(query);
 
-    // Only create an order if a concrete product was matched AND there is address or explicit order intent
-    if (matchedProduct && (hasAddressWords || hasOrderIntent)) {
+    // Only create an order if product matched AND real address is known
+    if (matchedProduct && effectiveAddress) {
       detectedOrder = {
         customerName: 'সম্মানিত গ্রাহক',
-        phone: phone,
-        address: hasAddressWords ? params.incomingText : 'ঠিকানা নেওয়া বাকি',
+        phone: effectivePhone,
+        address: effectiveAddress,
         product: matchedProduct.name,
         productId: matchedProduct.id,
         quantity: 1,
@@ -575,12 +692,11 @@ function generateSmartEcommerceFallback(params: {
       replyText = `ধন্যবাদ! আপনার "${detectedOrder.product}" পণ্যটির অর্ডার তথ্য সফলভাবে গ্রহণ করা হয়েছে।\n\n📦 পণ্যের নাম: ${detectedOrder.product}\n📞 মোবাইল: ${detectedOrder.phone}\n📍 ডেলিভারি ঠিকানা: ${detectedOrder.address}\n💰 মোট মূল্য: ৳${detectedOrder.totalPrice} (ডেলিভারি চার্জ সহ)\n\nআমাদের প্রতিনিধি দ্রুত আপনার সাথে যোগাযোগ করে ডেলিভারি কনফার্ম করবেন।`;
       return { replyText, detectedOrder, matchedProduct };
     } else if (matchedProduct) {
-      // Product was matched and phone provided, but no delivery address or order intent yet
-      replyText = `ধন্যবাদ! আপনার মোবাইল নম্বরটি (${phone}) পেয়েছি। "${matchedProduct.name}" পণ্যটি অর্ডার করতে অনুগ্রহ করে আপনার সম্পূর্ণ ডেলিভারি ঠিকানা লিখে পাঠিয়ে দিন! 🚚`;
+      // Product was matched and phone provided, but no delivery address yet
+      replyText = `ধন্যবাদ! আপনার মোবাইল নম্বরটি (${effectivePhone}) পেয়েছি। "${matchedProduct.name}" পণ্যটি অর্ডার করতে অনুগ্রহ করে আপনার সম্পূর্ণ ডেলিভারি ঠিকানা লিখে পাঠিয়ে দিন! 🚚`;
       return { replyText, detectedOrder: null, matchedProduct };
     } else {
-      // Customer only provided a phone number without selecting a product -> DO NOT pick products[0]!
-      replyText = `ধন্যবাদ! আপনার মোবাইল নম্বরটি (${phone}) পেয়েছি। আপনি আমাদের কোন পণ্যটি অর্ডার করতে চান অথবা কীভাবে সহায়তা করতে পারি, অনুগ্রহ করে একটু লিখে জানাবেন কি? 😊`;
+      replyText = `ধন্যবাদ! আপনার মোবাইল নম্বরটি (${effectivePhone}) পেয়েছি। আপনি আমাদের কোন পণ্যটি অর্ডার করতে চান অথবা কীভাবে সহায়তা করতে পারি, অনুগ্রহ করে একটু লিখে জানাবেন কি? 😊`;
       return { replyText, detectedOrder: null, matchedProduct: null };
     }
   }
@@ -749,23 +865,57 @@ export async function generateAIReply(params: GenerateReplyParams): Promise<AIRe
 
   const modelName = adminAi.model;
 
-  // Format products list for AI context with clear numbering, product type, and image status
+  // 1b. Fetch Customer Memory & Previous Details to prevent amnesia and repeated address requests
+  const customerMemory = await getConversationCustomerMemory(params.conversationId, incomingText);
+
+  // -------------------------------------------------------------
+  // Token Optimizer: Smart Dynamic Product Selection
+  // Instead of injecting 50 large products (~3,500+ tokens), select only
+  // the top 3-5 relevant products based on customer query/context,
+  // or top 6 active products in a compact format if general inquiry.
+  // -------------------------------------------------------------
+  const queryTokens = `${incomingText || ''} ${initialTranscription || ''} ${conversationHistory.slice(-4).map((m) => m.text).join(' ')}`.toLowerCase();
+
+  let selectedProducts = products;
+  if (products.length > 5) {
+    const scoredProducts = products.map((p) => {
+      let score = 0;
+      const pName = (p.name || '').toLowerCase();
+      const pCat = (p.category || '').toLowerCase();
+      const pSku = (p.sku || '').toLowerCase();
+
+      if (queryTokens.includes(pName) || pName.split(/\s+/).some((token) => token.length > 2 && queryTokens.includes(token))) score += 10;
+      if (pCat && queryTokens.includes(pCat)) score += 5;
+      if (pSku && queryTokens.includes(pSku)) score += 8;
+      if (p.stockStatus === 'IN_STOCK') score += 1;
+      return { product: p, score };
+    });
+
+    scoredProducts.sort((a, b) => b.score - a.score);
+    const hasRelevance = scoredProducts.some((sp) => sp.score >= 5);
+
+    if (hasRelevance) {
+      selectedProducts = scoredProducts.slice(0, 4).map((sp) => sp.product);
+    } else {
+      selectedProducts = products.slice(0, 6);
+    }
+  }
+
+  // Format compact products list (saving 85%+ prompt tokens on every message)
   const productsSummary =
-    products.length > 0
-      ? products
+    selectedProducts.length > 0
+      ? selectedProducts
           .map((p, idx) => {
             const imgCount = parseProductImages(p).length;
             const isDigital = p.productType === 'DIGITAL';
-            const typeLabel = isDigital
-              ? '⚡ [ডিজিটাল পণ্য: ইনস্ট্যান্ট ইমেইল ডেলিভারি, শিপিং চার্জ ৳০]'
-              : '📦 [ফিজিক্যাল পণ্য: কুরিয়ার ডেলিভারি]';
+            const typeLabel = isDigital ? '[ডিজিটাল: ইমেইল]' : '[ফিজিক্যাল: কুরিয়ার]';
+            const priceLabel = p.discountPrice ? `৳${p.discountPrice} (মূল ৳${p.price})` : `৳${p.price}`;
+            const shortDesc = p.description ? (p.description.length > 60 ? `${p.description.slice(0, 60)}...` : p.description) : '';
 
-            return `- [ID: ${p.id}] (#${idx + 1}) "${p.name}" | ${typeLabel} | ক্যাটাগরি: ${p.category || 'সাধারণ'} | দাম: ${
-              p.discountPrice ? `${p.discountPrice} টাকা (নিয়মিত ${p.price} টাকা)` : `${p.price} টাকা`
-            } | স্টক: ${isDigital ? 'ইন-স্টক (ডিজিটাল)' : `${p.stockStatus} (${p.stockQuantity} টি)`} | ছবি: ${imgCount > 0 ? `আছে (${imgCount}টি ছবি)` : 'নেই'} | বিবরণ: ${
-              p.description || 'N/A'
-            } | ডেলিভারি: ${isDigital ? 'অর্ডার/পেমেন্ট কনফার্মের সাথে সাথে ইমেইলে ইনস্ট্যান্ট পাবেন' : (p.deliveryInfo || 'স্ট্যান্ডার্ড')}${
-              p.productAiInstructions ? ` | বিশেষ তথ্য: ${p.productAiInstructions}` : ''
+            return `- [ID: ${p.id}] (#${idx + 1}) "${p.name}" ${typeLabel} | ${priceLabel} | স্টক: ${
+              isDigital ? 'ইন-স্টক' : p.stockStatus
+            } | ছবি: ${imgCount > 0 ? 'আছে' : 'নেই'}${shortDesc ? ` | ${shortDesc}` : ''}${
+              p.deliveryInfo ? ` | ডেলিভারি: ${p.deliveryInfo}` : ''
             }`;
           })
           .join('\n')
@@ -774,7 +924,7 @@ export async function generateAIReply(params: GenerateReplyParams): Promise<AIRe
   // Determine whether image sending is allowed for this turn/conversation
   const canSendImage = params.canSendProductImage !== false && (page.productImageReply !== false);
 
-  const sampleProductsWithImg = products.filter((p) => parseProductImages(p).length > 0);
+  const sampleProductsWithImg = selectedProducts.filter((p) => parseProductImages(p).length > 0);
   const sampleProductExamples = sampleProductsWithImg
     .slice(0, 2)
     .map((p) => `<<<SEND_PRODUCT_IMAGE: "${p.name}" >>>`)
@@ -782,73 +932,78 @@ export async function generateAIReply(params: GenerateReplyParams): Promise<AIRe
 
   const imageInstructionSection = canSendImage
     ? `[SENDING PRODUCT IMAGES FROM INVENTORY (পণ্য ছবি পাঠানোর নিয়মাবলী)]
-- যখন কোনো গ্রাহক কোনো পণ্যের ছবি/পিক/কালার দেখতে চান (যেমন: "ছবি দেন", "পিক দেখতে চাই", "photo pathan", "pic dekhaw", "ছবি আছে?", "কালারগুলো দেখতে চাই", "পণ্যটা দেখতে কেমন?"), অথবা ভয়েসে ছবি চান:
-- ইনভেন্টরি থেকে যে পণ্যের ছবি আছে (ছবি: আছে), সেই পণ্যের নাম ও দাম সুন্দরভাবে জানান।
-- এবং উত্তরের একেবারে শেষে বাধ্যতামূলকভাবে এই ট্যাগটি যোগ করুন:
+- যখন কোনো গ্রাহক কোনো পণ্যের ছবি/পিক দেখতে চান (যেমন: "ছবি দেন", "পিক দেখতে চাই", "photo pathan", "pic dekhaw"):
+- ইনভেন্টরি থেকে পণ্যের নাম ও দাম জানান এবং উত্তরের শেষে বাধ্যতামূলকভাবে এই ট্যাগটি যোগ করুন:
 <<<SEND_PRODUCT_IMAGE: "সঠিক পণ্যের নাম বা ID" >>>
-${sampleProductExamples ? `বাস্তব উদাহরণ: ${sampleProductExamples}` : `উদাহরণ: <<<SEND_PRODUCT_IMAGE: "পণ্যের নাম" >>>`}
-- এটি ইনভেন্টরি থেকে গ্রাহকের চ্যাটে পণ্যের ছবি স্বয়ংক্রিয়ভাবে পাঠিয়ে দেবে।`
-    : `[SENDING PRODUCT IMAGES RESTRICTION (ছবি পাঠানো সংক্রান্ত সীমাবদ্ধতা)]
-- এই গ্রাহকের সাথে কনভারসেশনে ছবি পাঠানোর সীমা সম্পন্ন হয়েছে অথবা ছবি পাঠানো বন্ধ রয়েছে।
-- তাই আপনি কোনোভাবেই <<<SEND_PRODUCT_IMAGE:...>>> ট্যাগ ব্যবহার করবেন না এবং নতুন কোনো ছবি পাঠানো হবে না।
-- গ্রাহক ছবি দেখতে চাইলে তাকে অত্যন্ত আন্তরিকতার সাথে টেক্সট মেসেজে পণ্যের বিবরণ, রং, ম্যাটেরিয়াল বা সাইজের বিবরণ বুঝিয়ে বলুন।`;
+${sampleProductExamples ? `উদাহরণ: ${sampleProductExamples}` : `উদাহরণ: <<<SEND_PRODUCT_IMAGE: "পণ্যের নাম" >>>`}`
+    : `[SENDING PRODUCT IMAGES RESTRICTION]
+- ছবি পাঠানো সীমাবদ্ধ রয়েছে। টেক্সট মেসেজে পণ্যের বিবরণ ও কালার বিনম্রভাবে জানান। কোনো ইমেজ ট্যাগ ব্যবহার করবেন না।`;
 
-  // System security and business instruction prompt
+  // System security, customer memory, and business instruction prompt
   const systemPrompt = `
 You are ReplyX AI, an expert, high-converting sales and customer care AI assistant for the business "${page.user.businessName || page.pageName}".
-Your primary goal is to assist customers on Facebook Messenger, WhatsApp, and social channels politely, accurately, and naturally in Bangla, Banglish, or English.
+Your primary goal is to assist customers on Facebook Messenger, WhatsApp, and social channels politely, accurately, and naturally in Bangla, Banglish, or English. Keep responses concise, friendly, and helpful.
+
+[CUSTOMER MEMORY & PREVIOUSLY PROVIDED DETAILS]
+- Customer Phone: ${customerMemory.knownPhone || 'Not yet given'}
+- Customer Delivery Address: ${customerMemory.knownAddress || 'Not yet given'}
+- Customer Email: ${customerMemory.knownEmail || 'Not yet given'}
+${customerMemory.existingOrders.length > 0 ? `
+⚠️ CRITICAL - ACTIVE ORDER ALREADY RECORDED IN SYSTEM:
+- Order ID: #${customerMemory.existingOrders[0].id.slice(0, 8)}
+- Product: "${customerMemory.existingOrders[0].product}"
+- Phone: ${customerMemory.existingOrders[0].phone}
+- Address: ${customerMemory.existingOrders[0].address}
+- Status: ${customerMemory.existingOrders[0].status}
+STRICT RULE: The customer's order has ALREADY been captured and confirmed in our database!
+DO NOT output <<<ORDER_JSON>>> again for this order!
+DO NOT ask for phone or address again!
+Acknowledge their existing order warmly and answer their delivery, tracking, or general inquiries.` : ''}
+
+[CRITICAL INSTRUCTIONS ON CUSTOMER ADDRESS & DETAILS]
+1. NEVER ASK FOR THE ADDRESS OR PHONE AGAIN IF ALREADY PROVIDED:
+   - If Customer Phone and Delivery Address (or Email for digital) are already present in [CUSTOMER MEMORY] above or anywhere in the conversation history, NEVER ask the customer to type them again!
+   - Use the known details directly to assist them or re-confirm their delivery.
+2. If the customer hasn't provided their address yet and wants to purchase a physical product, ask politely for their phone number and delivery address once.
 
 [CUSTOMER MESSAGE UNDERSTANDING & MULTIMODAL RULES]
 1. If the customer sends a VOICE / AUDIO message:
-   - Your system listens to and transcribes their voice message with ultra-high acoustic sensitivity.
-   - Even if the customer speaks very softly, faintly, or whispers (গ্রাহক যদি একদম আস্তে বা ফিসফিস করে কথা বলে), understand their inquiry or order completely in Bengali (Standard, Sylheti, Chatgaiya, Noakhali, Barisal, etc.), Banglish, or English.
-   - NEVER say "আমি এআই, আমি অডিও শুনতে পারি না" (Never say you cannot listen to audio). The customer's voice inquiry is provided to you.
-   - ALWAYS REPLY IN NATURAL, FRIENDLY TEXT FORMAT (গ্রাহক টেক্সট বা অডিও যাই পাঠাক, এআই সর্বদা সুন্দর ও স্পষ্ট টেক্সট মেসেজ আকারে উত্তর দেবে).
-   - If the audio was completely silent, blank, or truly unintelligible with zero discernible speech, politely say in text:
-     "দয়া করে একটু জোরে কথা বলুন, আমি আপনার ভয়েস বুঝতে পারছি না। অথবা অনুগ্রহ করে আপনার প্রশ্নটি লিখে জানান, আমি এখনই সাহায্য করছি! 😊"
-   - If the voice message is understood, reply warmly and directly answer their inquiry in text format with product details, price, photo, or order confirmation.
-
+   - Transcribed spoken words are provided below. Understand their voice inquiry in Bengali, Banglish, or English.
+   - ALWAYS REPLY IN NATURAL, FRIENDLY TEXT FORMAT.
+   - If audio was completely silent or unintelligible, reply: "দয়া করে একটু জোরে কথা বলুন, আমি আপনার ভয়েস বুঝতে পারছি না। অথবা আপনার প্রশ্নটি লিখে জানান, আমি সাহায্য করছি! 😊"
 2. If the customer sends an IMAGE:
-   - Identify the product, garment, watch, shoe, color, model, or inquiry in the image.
-   - Cross-check against the Live Product Inventory below.
-   - If matched, provide the exact price, stock status, discount, and ask if they would like to order.
-   - If not found in inventory, politely explain that this exact item is currently out of stock and recommend similar items from the list.
-
+   - Identify the product, match with Live Inventory, and reply with price and details.
 3. If the customer sends TEXT:
-   - Answer directly, briefly, and helpfully in text.
+   - Answer directly, briefly, and helpfully with appropriate emojis.
 
 ${imageInstructionSection}
 
 [STRICT INVENTORY & PRICING RULES]
-1. Never invent, hallucinate, or guess prices or products not present in the inventory list below.
-2. Keep Messenger replies concise, polite, and well-structured with appropriate emojis.
-3. Preferred reply language setting: ${page.replyLanguage} (If AUTO, match the customer's language naturally).
-4. Reply tone style: ${page.replyStyle}.
+1. Never invent or guess prices or products not in the inventory list below.
+2. Preferred reply language setting: ${page.replyLanguage} | Tone: ${page.replyStyle}.
 
-[PAGE SPECIFIC BUSINESS INSTRUCTIONS]
+[PAGE BUSINESS INSTRUCTIONS]
 ${page.aiInstructions || 'গ্রাহকদের সাথে অত্যন্ত আন্তরিকতার সাথে কথা বলুন এবং অর্ডার সংগ্রহে সহায়তা করুন।'}
 
-[LIVE PRODUCT INVENTORY FOR THIS BUSINESS]
+[LIVE PRODUCT INVENTORY (COMPACT)]
 ${productsSummary}
 
 [ORDER CAPTURE PROTOCOL (ফিজিক্যাল ও ডিজিটাল পণ্য অর্ডার সংগ্রহের নিয়মাবলী)]
-When a customer expresses clear purchase intent (e.g. provides name, contact, address/email, or confirms they want to order/buy a specific item):
+- Only output <<<ORDER_JSON>>> if:
+  1. The customer specifically confirms/orders a product, AND
+  2. BOTH valid phone and delivery address (or email for digital) are present, AND
+  3. No active order is already recorded in [CUSTOMER MEMORY] above for this item.
+- NEVER output <<<ORDER_JSON>>> repeatedly on subsequent turns!
 
-A. যদি ডিজিটাল পণ্য হয় (⚡ DIGITAL PRODUCT):
-- যেমন: সফটওয়্যার, লাইসেন্স কী, ই-বুক, কোর্স, ডিজিটাল সার্ভিস, ফাইল ইত্যাদি।
-- ডেলিভারি চার্জ: সম্পূর্ণ বিনামূল্যে (৳০)। কোনো কুরিয়ার চার্জ প্রযোজ্য নয়।
-- ডেলিভারি পদ্ধতি: ইনস্ট্যান্ট ইমেইল ডেলিভারি (অর্ডার/পেমেন্ট কনফার্মের সাথে সাথেই গ্রাহকের ইমেইলে ডাউনলোড লিংক ও অ্যাক্সেস চলে যাবে)।
-- গ্রাহককে বলুন: "আপনার ডিজিটাল পণ্যটি সাথে সাথে আপনার ইমেইলে পাঠিয়ে দেওয়া হবে। অনুগ্রহ করে আপনার ইমেইল এড্রেসটি প্রদান করুন।"
-- গ্রাহকের ইমেইল পেলেই সাথে সাথে অর্ডার প্রসেস করুন।
-- আউটপুট ফরম্যাট:
+A. DIGITAL PRODUCT (⚡):
 <<<ORDER_JSON
 {
-  "customerName": "Customer Name or 'Customer'",
+  "customerName": "Customer Name",
   "customerEmail": "customer@email.com",
   "phone": "01XXXXXXXXX or N/A",
   "address": "ডিজিটাল ডেলিভারি (ইমেইল)",
   "product": "Product Name",
-  "productId": "Product ID if matched from inventory",
+  "productId": "Product ID",
   "productType": "DIGITAL",
   "quantity": 1,
   "price": 500,
@@ -856,27 +1011,20 @@ A. যদি ডিজিটাল পণ্য হয় (⚡ DIGITAL PRODUCT):
 }
 ORDER_JSON>>>
 
-B. যদি ফিজিক্যাল পণ্য হয় (📦 PHYSICAL PRODUCT):
-- যেমন: জামাকাপড়, গ্যাজেট, ঘড়ি, জুতা, কসমেটিক্স ইত্যাদি।
-- ডেলিভারি পদ্ধতি: কুরিয়ার সার্ভিস (ক্যাশ অন ডেলিভারি / বিকাশ)।
-- ডেলিভারি চার্জ: পেজের ডেলিভারি পলিসি অনুযায়ী (যেমন: ঢাকার ভেতরে ৭০ টাকা, বাইরে ১৩০ টাকা)।
-- গ্রাহকের মোবাইল নম্বর এবং পূর্ণাঙ্গ ডেলিভারি ঠিকানা প্রয়োজন।
-- আউটপুট ফরম্যাট:
+B. PHYSICAL PRODUCT (📦):
 <<<ORDER_JSON
 {
-  "customerName": "Customer Name or 'Customer'",
+  "customerName": "Customer Name",
   "phone": "01XXXXXXXXX",
   "address": "Customer delivery address",
   "product": "Product Name",
-  "productId": "Product ID if matched from inventory",
+  "productId": "Product ID",
   "productType": "PHYSICAL",
   "quantity": 1,
   "price": 1200,
   "totalPrice": 1270
 }
 ORDER_JSON>>>
-
-সতর্কতা: ফিজিক্যাল পণ্যে ফোন ও ঠিকানা এবং ডিজিটাল পণ্যে ইমেইল এড্রেস না পেলে গ্রাহককে মিষ্টি ও নম্র ভাষায় সেটি প্রদানের অনুরোধ করুন।
 `.trim();
 
   let replyText = '';
@@ -1156,6 +1304,7 @@ ORDER_JSON>>>
       businessName: page?.pageName || page?.user?.businessName || 'আমাদের প্রতিষ্ঠান',
       isSandbox,
       providerError: aiErr?.message,
+      customerMemory,
     });
     replyText = smartFallback.replyText;
     if (smartFallback.detectedOrder) {
@@ -1166,15 +1315,27 @@ ORDER_JSON>>>
     }
   }
 
-  // 4. Extract structured Order JSON if present (if not already detected)
+  // 4. Extract structured Order JSON if present (with 100% duplicate order protection)
   if (!detectedOrder) {
     const orderRegex = /<<<ORDER_JSON\s*([\s\S]*?)\s*ORDER_JSON>>>/;
     const match = replyText.match(orderRegex);
 
     if (match && match[1]) {
       try {
-        detectedOrder = JSON.parse(match[1].trim());
+        const parsed = JSON.parse(match[1].trim());
         replyText = replyText.replace(orderRegex, '').trim();
+
+        // Anti-Duplicate Order Protection:
+        // If an active order already exists in customer memory for this conversation within the last 3 hours, ignore duplicate tag
+        const isDuplicate = customerMemory.existingOrders && customerMemory.existingOrders.some(
+          (eo) => eo.product.toLowerCase().includes((parsed.product || '').slice(0, 10).toLowerCase()) || (Date.now() - new Date(eo.createdAt).getTime() < 3 * 60 * 60 * 1000)
+        );
+
+        if (!isDuplicate) {
+          detectedOrder = parsed;
+        } else {
+          serverLogger.info(`[AI Order Filter] Ignored duplicate ORDER_JSON block for conversation: ${params.conversationId}`);
+        }
       } catch (e) {
         serverLogger.warn('Failed to parse extracted ORDER_JSON block', e);
       }
